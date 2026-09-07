@@ -1,0 +1,22 @@
+rpi-cxd56xx-gnss
+
+Extracted and modified from Pi Zero Bikecomputer:
+https://github.com/hishizuka/pizero_bikecomputer
+
+This project is licensed under the Apache License, Version 2.0.
+Portions of src/cxd56xx_gnss/cxd5610_rpi.c and cxd5610_rpi.h are adapted
+from Apache NuttX.
+
+The following applicable attribution is reproduced from Apache NuttX NOTICE:
+
+Apache NuttX
+Copyright 2020 The Apache Software Foundation
+
+This product includes software developed at
+The Apache Software Foundation (http://www.apache.org/).
+
+Modifications include the Linux userspace I2C/libgpiod port, a pthread-based
+receiver and snapshot API, Cython bindings, and standalone packaging.
+See THIRD_PARTY.md for source provenance and the limits of that record.
+
+The Apache License 2.0 text is included in LICENSE.

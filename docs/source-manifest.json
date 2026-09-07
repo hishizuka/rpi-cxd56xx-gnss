@@ -1,0 +1,41 @@
+{
+  "extraction_date": "2026-09-06",
+  "source_repository": "https://github.com/hishizuka/pizero_bikecomputer",
+  "source_commit": "278fb822c610d086460bb8a7cd751d2ec27fdd53",
+  "upstream_comparison_commit": "87f134cfaa9e1474515deffb1e1224ab16f5b48e",
+  "original_upstream_commit": null,
+  "files": [
+    {
+      "path": "modules/sensor/gps/cython/cxd5610_rpi.c",
+      "sha256": "383d90d6d9526b3e021e2258bb3a9a3fa0545692d8481fd60f435dadd17585f3"
+    },
+    {
+      "path": "modules/sensor/gps/cython/cxd5610_rpi.h",
+      "sha256": "588c3752ab60e9c475136e4a8dfa4808b752e7e78baed03147199e52c87f98c0"
+    },
+    {
+      "path": "modules/sensor/gps/cython/cxd5610_helper.pyx",
+      "sha256": "2aec9f91929f17d2c8d8a355fc083445d6448e484d4e3408a2899461edbe3101"
+    },
+    {
+      "path": "modules/sensor/gps/cython/cxd5610_helper.pyxbld",
+      "sha256": "26c3975275b80c093ee6e83888e1495e11bb1ef6319fda95341da29fcee848ec"
+    },
+    {
+      "path": "modules/sensor/gps/cython/build.py",
+      "sha256": "8ba4931f3761b681e018f6eadcb8c74bedfaf2c8bdfbd004b7b83ed5459bee84"
+    },
+    {
+      "path": "LICENSE",
+      "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+    },
+    {
+      "path": "NOTICE",
+      "sha256": "e78a9de02f9bfb58b9b748c1699cd4be992bb62bd6c65ff2c145e390d431a2fc"
+    },
+    {
+      "path": "third_party/apache/LICENSE.Apache2",
+      "sha256": "540121b882ab54fa2c322d345c0cafa9ff39373abaaf1b678fe65e2d34a44307"
+    }
+  ]
+}
