@@ -36,8 +36,10 @@ package index requires a manual workflow run.
 
 [PyPI](https://pypi.org/account/register/) and
 [TestPyPI](https://test.pypi.org/account/register/) are separate services.
-Create accounts on both, then open **Publishing** in each account's settings
-and add a GitHub Pending Publisher:
+Create an account on each service, verify its email address, and enable
+two-factor authentication (2FA). Accounts and login sessions are separate.
+[2FA is required for publisher management](https://blog.pypi.org/posts/2024-01-01-2fa-enforced/).
+Then open **Publishing** in each account's settings and add a GitHub Pending Publisher:
 
 | Field | PyPI | TestPyPI |
 | --- | --- | --- |

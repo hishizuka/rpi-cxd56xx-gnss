@@ -32,7 +32,10 @@ GNSS デバイスは開きません。パッケージインデックスへのア
 ## PyPI と TestPyPI の設定
 
 [PyPI](https://pypi.org/account/register/) と [TestPyPI](https://test.pypi.org/account/register/) は別のサービスです。
-両方にアカウントを作成し、それぞれのアカウント設定から **Publishing** を開いて GitHub Pending Publisher を追加します。
+両方にアカウントを作成し、それぞれメールアドレスの確認と二要素認証（2FA）の設定を完了してください。
+アカウントとログイン状態はサービスごとに独立しています。
+[公開元の管理には二要素認証が必要です](https://blog.pypi.org/posts/2024-01-01-2fa-enforced/)。
+その後、それぞれのアカウント設定から **Publishing** を開いて GitHub Pending Publisher を追加します。
 
 | 項目 | PyPI | TestPyPI |
 | --- | --- | --- |
