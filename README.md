@@ -4,6 +4,8 @@
 pip install rpi-cxd56xx-gnss
 ```
 
+![Raspberry Pi with a Sony Spresense GNSS Add-on Board](https://raw.githubusercontent.com/hishizuka/rpi-cxd56xx-gnss/main/docs/images/rpi-cxd56xx-gnss.jpg)
+
 English | [日本語](https://github.com/hishizuka/rpi-cxd56xx-gnss/blob/main/README.ja.md)
 
 Sony CXD56xx GNSS receivers on Raspberry Pi: a Linux I2C driver, Python bindings

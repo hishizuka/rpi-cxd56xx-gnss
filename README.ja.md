@@ -4,6 +4,8 @@
 pip install rpi-cxd56xx-gnss
 ```
 
+![Raspberry Pi と Sony Spresense GNSS Add-on Board](https://raw.githubusercontent.com/hishizuka/rpi-cxd56xx-gnss/main/docs/images/rpi-cxd56xx-gnss.jpg)
+
 [English](https://github.com/hishizuka/rpi-cxd56xx-gnss/blob/main/README.md) | 日本語
 
 Raspberry Pi で Sony CXD56xx GNSS を利用するための Linux I2C ドライバー、Python バインディング、コマンドラインツールです。
