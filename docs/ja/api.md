@@ -31,7 +31,6 @@ finally:
 
 実行用のサンプルは [examples/i2c_read.py](../../examples/i2c_read.py) にあります。
 ダウンロードするか、リポジトリを取得し、仮想環境を有効にした状態で `python examples/i2c_read.py` を実行してください。
-時間を区切って通信・Fix・更新間隔を記録する場合は、[I2C 窓際テスト](i2c-window-test.md)を参照してください。
 
 `close()` は測位停止の応答を待ってI²CとIRQを解放します。繰り返し呼んでも安全です。
 停止に失敗した場合は `OSError`、解放後の `peek()` では `ValueError` が発生します。
@@ -58,7 +57,7 @@ finally:
 欠損値は `None` です。初期化時にデバイスを開けない場合は `OSError` が発生します。
 現在、I2C ドライバーの衛星選択は固定設定です。プロトコルの違いは
 [UART ガイドの I2C 衛星設定](uart.md#i2c-satellite-settings)を参照してください。
-RTCM観測データの取得可否と短時間の実験用プローブは、[I2C の RTCM 調査](rtcm.md)を参照してください。
+RTCM観測データの取得手順と短時間の実験用プローブは、[I2C の RTCM 収集ガイド](rtcm.md)を参照してください。
 Piからのv144更新ツールの対象・依存関係・実行手順は、[ファームウェア更新ガイド](firmware-update.md)を参照してください。
 
 <a id="building-from-a-checkout"></a>

@@ -9,6 +9,9 @@ wheelhouse/
 /tmp/
 .DS_Store
 
+# Keep investigation diaries and development notes local.
+/docs/diary/
+
 # Keep credentials, firmware packages and receiver recordings local.
 .env
 .env.*

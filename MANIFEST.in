@@ -4,4 +4,5 @@ recursive-include docs *.md *.json *.png
 recursive-include examples *.py *.c
 recursive-include tests *.py *.c
 include scripts/gnss-record
+prune docs/diary
 prune build

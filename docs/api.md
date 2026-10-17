@@ -33,8 +33,6 @@ finally:
 A runnable version is in [examples/i2c_read.py](../examples/i2c_read.py).
 Download it or run `python examples/i2c_read.py` from a checkout with your virtual
 environment active.
-For timed communication, fix and update-interval checks, see the
-[I2C observation guide](i2c-window-test.md).
 
 `close()` waits for the GNSS stop acknowledgement and releases I2C/IRQ resources.
 It is idempotent and raises `OSError` on shutdown failure. Call it in `finally`

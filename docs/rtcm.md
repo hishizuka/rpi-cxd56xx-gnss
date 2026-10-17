@@ -1,6 +1,6 @@
 # I2C RTCM recording
 
-English | [日本語・調査記録](ja/rtcm.md)
+English | [日本語](ja/rtcm.md)
 
 [README](../README.md) · [Setup](setup.md) · [Firmware update](firmware-update.md)
 

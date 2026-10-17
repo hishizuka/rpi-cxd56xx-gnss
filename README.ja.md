@@ -57,7 +57,6 @@ CXD5605 の I2C 接続での互換性は未確認です。
 
 リポジトリまたは展開したソース配布物から実行するツールです。pipのコマンドとしてはインストールされません。
 
-- [I2C 窓際テスト](https://github.com/hishizuka/rpi-cxd56xx-gnss/blob/main/docs/ja/i2c-window-test.md)：通信、Fix、更新間隔を分けて記録します。
 - [RTCM収集](https://github.com/hishizuka/rpi-cxd56xx-gnss/blob/main/docs/ja/rtcm.md)：I2C観測データの取得・検証と、screenでの継続収集に対応します。
 - [ファームウェア更新](https://github.com/hishizuka/rpi-cxd56xx-gnss/blob/main/docs/ja/firmware-update.md)：別途取得したv144パッケージのオフライン検査と、Spresense GNSSアドオンへの明示的なI2C書き込みに対応します。別ツールのRYS8839向けUART更新は実験用で、ファームウェア互換性は未確認です。
 
@@ -66,7 +65,6 @@ CXD5605 の I2C 接続での互換性は未確認です。
 - [セットアップ](https://github.com/hishizuka/rpi-cxd56xx-gnss/blob/main/docs/ja/setup.md) — 接続図、ピン対応表、I2C クロックと GPIO の設定。
 - [Python・C API](https://github.com/hishizuka/rpi-cxd56xx-gnss/blob/main/docs/ja/api.md) — 使用例、プロパティ、リポジトリからのビルド。
 - [UART サンプル](https://github.com/hishizuka/rpi-cxd56xx-gnss/blob/main/docs/ja/uart.md) — 独立した pySerial サンプルの使い方、起動コマンド、バンド選択。
-- [リリース手順](https://github.com/hishizuka/rpi-cxd56xx-gnss/blob/main/docs/ja/releasing.md) — GitHub、TestPyPI、PyPI への公開。
 
 ## ライセンスと由来
 

@@ -61,7 +61,6 @@ UART connections have been tested with these boards:
 Run these tools from a repository checkout or unpacked source distribution;
 they are not installed as pip commands.
 
-- [Timed I2C observation](https://github.com/hishizuka/rpi-cxd56xx-gnss/blob/main/docs/i2c-window-test.md) records communication, fixes and update intervals separately.
 - [RTCM recording](https://github.com/hishizuka/rpi-cxd56xx-gnss/blob/main/docs/rtcm.md) collects and checks I2C observations, with an optional `screen` launcher.
 - [Firmware update](https://github.com/hishizuka/rpi-cxd56xx-gnss/blob/main/docs/firmware-update.md) validates an externally obtained v144 package offline and provides an explicit I2C write mode for the Spresense GNSS Add-on Board. The separate RYS8839 UART updater is experimental; firmware compatibility is unverified.
 
@@ -70,7 +69,6 @@ they are not installed as pip commands.
 - [Setup](https://github.com/hishizuka/rpi-cxd56xx-gnss/blob/main/docs/setup.md) — wiring diagrams, pin mapping, I2C clock and GPIO settings.
 - [Python and C API](https://github.com/hishizuka/rpi-cxd56xx-gnss/blob/main/docs/api.md) — examples, properties and building from a checkout.
 - [UART example](https://github.com/hishizuka/rpi-cxd56xx-gnss/blob/main/docs/uart.md) — standalone pySerial usage, startup commands and band selection.
-- [Releasing](https://github.com/hishizuka/rpi-cxd56xx-gnss/blob/main/docs/releasing.md) — GitHub, TestPyPI and PyPI publishing.
 
 ## License and origin
 
