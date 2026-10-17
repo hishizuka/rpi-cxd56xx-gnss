@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rpi-cxd56xx-gnss"
-version = "0.1.0"
+version = "0.1.1"
 description = "Linux I2C driver and Python bindings for Sony CXD56xx GNSS receivers"
 readme = "README.md"
 authors = [{name = "hishizuka"}]
