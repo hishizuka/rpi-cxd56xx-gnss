@@ -26,17 +26,23 @@ try:
             raise OSError(-result, "GNSS read failed")
         time.sleep(1)
 finally:
-    del gps
+    gps.close()
 ```
 
 実行用のサンプルは [examples/i2c_read.py](../../examples/i2c_read.py) にあります。
 ダウンロードするか、リポジトリを取得し、仮想環境を有効にした状態で `python examples/i2c_read.py` を実行してください。
+時間を区切って通信・Fix・更新間隔を記録する場合は、[I2C 窓際テスト](i2c-window-test.md)を参照してください。
+
+`close()` は測位停止の応答を待ってI²CとIRQを解放します。繰り返し呼んでも安全です。
+停止に失敗した場合は `OSError`、解放後の `peek()` では `ValueError` が発生します。
+デストラクターでも終了処理を試みますが、終了結果を確認するには `finally` で `close()` を呼んでください。
 
 `peek()` は待機せずに戻ります。スナップショットの取得に成功すると `0`、最初の通知を待っている間は
 `-errno.EAGAIN`、エラー時はその他の負の errno を返します。プロパティは成功後に読み取ってください。
 新しい通知がない場合は前回のスナップショットを返すため、更新の有無は `timestamp` を比較して判定します。
 
 受信成功は、必ずしも測位成立を意味しません。`mode=3` / `status=1` は 3D 測位を示します。
+`mode=2` は2D測位、`status=2` はDifferential GPSの有効なFixです。
 
 | プロパティ | 意味 |
 | --- | --- |
@@ -46,12 +52,14 @@ finally:
 | `track` | 方位（度） |
 | `mode`, `status` | 測位状態 |
 | `pdop`, `hdop`, `vdop` | 精度低下率（DOP） |
-| `used_sats`, `total_sats` | 衛星数。`used_sats` は追尾フラグを数えた値 |
+| `used_sats`, `total_sats` | 追尾フラグ数／通知項目数。同じ衛星の別信号を含み、重複を除いた衛星数ではない |
 | `timestamp` | UTC の Unix 時刻（秒） |
 
 欠損値は `None` です。初期化時にデバイスを開けない場合は `OSError` が発生します。
 現在、I2C ドライバーの衛星選択は固定設定です。プロトコルの違いは
 [UART ガイドの I2C 衛星設定](uart.md#i2c-satellite-settings)を参照してください。
+RTCM観測データの取得可否と短時間の実験用プローブは、[I2C の RTCM 調査](rtcm.md)を参照してください。
+Piからのv144更新ツールの対象・依存関係・実行手順は、[ファームウェア更新ガイド](firmware-update.md)を参照してください。
 
 <a id="building-from-a-checkout"></a>
 

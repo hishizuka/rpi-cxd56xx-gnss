@@ -4,6 +4,9 @@ English | [日本語](ja/uart.md)
 
 [README](../README.md) · [I2C setup](setup.md) · [Python and C API](api.md)
 
+For the separate experimental RYS8839 firmware updater, see the
+[firmware update guide](firmware-update.md#experimental-uart-update).
+
 [examples/uart_read.py](../examples/uart_read.py) sends startup commands to
 REYAX RYS8833_Lite / RYS8839_Lite modules and prints their NMEA output.
 It uses pySerial directly and does not require the I2C native extension or libgpiod.

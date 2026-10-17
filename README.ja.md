@@ -53,6 +53,14 @@ CXD5605 の I2C 接続での互換性は未確認です。
 | [REYAX RYS8833_Lite](https://reyax.com/product/GPS-GNSS/RYS8833) | CXD5605AGF | L1 |
 | [REYAX RYS8839_Lite](https://reyax.com/product/GPS-GNSS/RYS8839) | CXD5610GF | L1 + L5 |
 
+## 追加ツール
+
+リポジトリまたは展開したソース配布物から実行するツールです。pipのコマンドとしてはインストールされません。
+
+- [I2C 窓際テスト](https://github.com/hishizuka/rpi-cxd56xx-gnss/blob/main/docs/ja/i2c-window-test.md)：通信、Fix、更新間隔を分けて記録します。
+- [RTCM収集](https://github.com/hishizuka/rpi-cxd56xx-gnss/blob/main/docs/ja/rtcm.md)：I2C観測データの取得・検証と、screenでの継続収集に対応します。
+- [ファームウェア更新](https://github.com/hishizuka/rpi-cxd56xx-gnss/blob/main/docs/ja/firmware-update.md)：別途取得したv144パッケージのオフライン検査と、Spresense GNSSアドオンへの明示的なI2C書き込みに対応します。別ツールのRYS8839向けUART更新は実験用で、ファームウェア互換性は未確認です。
+
 ## ドキュメント
 
 - [セットアップ](https://github.com/hishizuka/rpi-cxd56xx-gnss/blob/main/docs/ja/setup.md) — 接続図、ピン対応表、I2C クロックと GPIO の設定。

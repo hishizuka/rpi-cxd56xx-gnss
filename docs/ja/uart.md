@@ -4,6 +4,9 @@
 
 [README](../../README.ja.md) · [I2C セットアップ](setup.md) · [Python・C API](api.md)
 
+別ツールの実験用RYS8839ファームウェア更新については、
+[更新ガイド](firmware-update.md#experimental-uart-update)を参照してください。
+
 [examples/uart_read.py](../../examples/uart_read.py) は、REYAX RYS8833_Lite / RYS8839_Lite に
 起動コマンドを送信し、NMEA 出力を表示するサンプルです。
 pySerial を直接使用するため、I2C 用のネイティブ拡張や libgpiod は不要です。

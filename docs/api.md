@@ -27,12 +27,18 @@ try:
             raise OSError(-result, "GNSS read failed")
         time.sleep(1)
 finally:
-    del gps
+    gps.close()
 ```
 
 A runnable version is in [examples/i2c_read.py](../examples/i2c_read.py).
 Download it or run `python examples/i2c_read.py` from a checkout with your virtual
 environment active.
+For timed communication, fix and update-interval checks, see the
+[I2C observation guide](i2c-window-test.md).
+
+`close()` waits for the GNSS stop acknowledgement and releases I2C/IRQ resources.
+It is idempotent and raises `OSError` on shutdown failure. Call it in `finally`
+to check shutdown errors; `peek()` after closing raises `ValueError`.
 
 `peek()` is non-blocking. It returns `0` for a successful snapshot,
 `-errno.EAGAIN` while waiting for the first notification, or another negative
@@ -40,7 +46,8 @@ errno on error. Read properties only after success. Without a new notification,
 it returns the previous snapshot; compare `timestamp` to detect updates.
 
 Successful reception does not necessarily mean a position fix.
-`mode=3` / `status=1` indicates a 3D fix.
+`mode=3` / `status=1` indicates a 3D fix. `mode=2` indicates a 2D fix;
+`status=2` is a valid differential GPS fix.
 
 | Property | Meaning |
 | --- | --- |
@@ -50,12 +57,14 @@ Successful reception does not necessarily mean a position fix.
 | `track` | Heading in degrees |
 | `mode`, `status` | Fix state |
 | `pdop`, `hdop`, `vdop` | Dilution of precision |
-| `used_sats`, `total_sats` | Satellite counts; `used_sats` counts tracking flags |
+| `used_sats`, `total_sats` | Tracking flags / notification entries; separate signals from the same satellite can be counted more than once |
 | `timestamp` | UTC Unix time in seconds |
 
 Missing values are `None`. Failure to open a device during initialization raises
 `OSError`. Satellite selection is currently fixed in the I2C driver; see the
 [UART guide](uart.md#i2c-satellite-settings) for the distinction between protocols.
+Standalone [RTCM recording](rtcm.md) and [firmware update tools](firmware-update.md)
+have separate dependencies and commands; they are not part of this API.
 
 ## Building from a checkout
 
