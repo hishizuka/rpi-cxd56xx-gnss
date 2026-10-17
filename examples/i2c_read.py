@@ -2,6 +2,7 @@
 """Read position snapshots from a Sony GNSS receiver over I2C."""
 
 import errno
+import signal
 import time
 
 from cxd56xx_gnss import CXD56xx
@@ -9,8 +10,14 @@ from cxd56xx_gnss import CXD56xx
 
 def main():
     # The driver sends the binary initialization commands in its worker thread.
-    gps = CXD56xx()
+    gps = None
+
+    def request_stop(signum, frame):
+        raise KeyboardInterrupt
+
+    previous = signal.signal(signal.SIGTERM, request_stop)
     try:
+        gps = CXD56xx()
         while True:
             result = gps.peek()
             if result == -errno.EAGAIN:
@@ -28,7 +35,11 @@ def main():
     except KeyboardInterrupt:
         print("\nStopping GNSS.")
     finally:
-        del gps
+        try:
+            if gps is not None:
+                gps.close()
+        finally:
+            signal.signal(signal.SIGTERM, previous)
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@
 """Display GNSS snapshots using the installed extension."""
 
 import errno
+import signal
 import sys
 import time
 from datetime import datetime, timezone
@@ -10,14 +11,20 @@ from . import CXD56xx
 
 
 def main():
-    try:
-        gps = CXD56xx()
-    except OSError as exc:
-        print(f"[INIT] failed (errno={exc.errno}): {exc}", file=sys.stderr)
-        return 1
+    gps = None
 
-    print("[INIT] CXD56xx initialized. Reading every 1s; Ctrl+C to stop.")
+    def request_stop(signum, frame):
+        raise KeyboardInterrupt
+
+    previous = signal.signal(signal.SIGTERM, request_stop)
     try:
+        try:
+            gps = CXD56xx()
+        except OSError as exc:
+            print(f"[INIT] failed (errno={exc.errno}): {exc}", file=sys.stderr)
+            return 1
+
+        print("[INIT] CXD56xx initialized. Reading every 1s; Ctrl+C to stop.")
         while True:
             ret = gps.peek()
             if ret == -errno.EAGAIN:
@@ -41,6 +48,12 @@ def main():
             time.sleep(1)
     except KeyboardInterrupt:
         print("\n[EXIT] stop requested.")
+    finally:
+        try:
+            if gps is not None:
+                gps.close()
+        finally:
+            signal.signal(signal.SIGTERM, previous)
     return 0
 
 

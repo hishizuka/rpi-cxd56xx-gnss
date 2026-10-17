@@ -31,6 +31,7 @@ cdef extern from "cxd5610_rpi.h":
 
   int cxd5610_create(cxd5610_ctx **out_ctx)
   int cxd5610_peek(cxd5610_ctx *ctx, cxd5610_data *out)
+  int cxd5610_shutdown(cxd5610_ctx *ctx) nogil
   void cxd5610_close(cxd5610_ctx *ctx)
 
 
@@ -70,6 +71,18 @@ cdef class CXD56xx:
     if self.ctx is not NULL:
       cxd5610_close(self.ctx)
       self.ctx = NULL
+
+  cpdef close(self):
+    """Stop GNSS, release I2C/IRQ, and report a missing STOP acknowledgement."""
+    cdef cxd5610_ctx *ctx = self.ctx
+    cdef int ret
+    if ctx is NULL:
+      return
+    self.ctx = NULL
+    with nogil:
+      ret = cxd5610_shutdown(ctx)
+    if ret < 0:
+      raise OSError(-ret, "failed to stop CXD56xx")
 
   cpdef int peek(self):
     if self.ctx is NULL:

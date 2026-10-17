@@ -131,6 +131,8 @@ struct cxd5610_data {
 int cxd5610_create(cxd5610_ctx **out_ctx);
 int cxd5610_read(cxd5610_ctx *ctx, struct cxd5610_data *out, int timeout_ms);
 int cxd5610_peek(cxd5610_ctx *ctx, struct cxd5610_data *out);
+/* Both shutdown functions release the context, including on failure. */
+int cxd5610_shutdown(cxd5610_ctx *ctx);
 void cxd5610_close(cxd5610_ctx *ctx);
 
 #ifdef __cplusplus

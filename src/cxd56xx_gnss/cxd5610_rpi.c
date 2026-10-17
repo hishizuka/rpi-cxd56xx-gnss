@@ -66,11 +66,22 @@ typedef struct cxd5610_ctx {
   bool cond_initialized;
   bool running;
   bool thread_started;
+  bool irq_wait_started;
+  bool irq_part_ready;
+  bool rx_pending;
+  bool rx_discard;
+  uint8_t rx_opcode;
+  uint8_t rx_checksum;
+  uint16_t rx_length;
+  size_t rx_offset;
+  int transport_error;
   bool ready;
   bool data_valid;
   int last_opc;
   uint64_t sample_seq;
 } cxd5610_ctx;
+
+static int64_t monotonic_ms(void);
 
 /* Forward declaration for reuse inside the worker loop */
 static void handle_notify(struct cxd5610_ctx *ctx,
@@ -282,70 +293,99 @@ static int32_t le32(const void *p)
 
 static int read_exact(int fd, uint8_t *buf, size_t len)
 {
-  size_t off = 0;
-  while (off < len)
+  ssize_t n;
+  do
     {
-      ssize_t n = read(fd, buf + off, len - off);
-      if (n < 0)
-        {
-          if (errno == EINTR)
-            {
-              continue;
-            }
-          return -errno;
-        }
-      if (n == 0)
-        {
-          return -EIO;
-        }
-      off += (size_t)n;
+      n = read(fd, buf, len);
     }
-  return 0;
+  while (n < 0 && errno == EINTR);
+  /* Each I2C syscall is a transaction, not a resumable byte stream. */
+  return n < 0 ? -errno : (size_t)n == len ? 0 : -EIO;
 }
 
 static int write_exact(int fd, const uint8_t *buf, size_t len)
 {
-  size_t off = 0;
-  while (off < len)
+  ssize_t n;
+  do
     {
-      ssize_t n = write(fd, buf + off, len - off);
-      if (n < 0)
-        {
-          if (errno == EINTR)
-            {
-              continue;
-            }
-          return -errno;
-        }
-      off += (size_t)n;
+      n = write(fd, buf, len);
     }
-  return 0;
+  while (n < 0 && errno == EINTR);
+  return n < 0 ? -errno : (size_t)n == len ? 0 : -EIO;
 }
 
-static int wait_irq(struct cxd5610_ctx *ctx, int timeout_ms)
+static int discard_irq_events(struct cxd5610_ctx *ctx)
 {
   struct pollfd pfd = {
     .fd = gpiod_line_request_get_fd(ctx->irq_req),
     .events = POLLIN
   };
+  int ret;
+  while ((ret = poll(&pfd, 1, 0)) > 0)
+    {
+      if (gpiod_line_request_read_edge_events(ctx->irq_req, ctx->evbuf, 16) <= 0)
+        {
+          return -EIO;
+        }
+    }
+  return ret < 0 ? -errno : 0;
+}
 
+static int wait_irq(struct cxd5610_ctx *ctx, int timeout_ms)
+{
+  if (ctx->irq_part_ready)
+    return 0;
+
+  /* Only the initial transfer may use a level asserted before line ownership. */
+  if (!ctx->irq_wait_started)
+    {
+      int ret = discard_irq_events(ctx);
+      if (ret < 0)
+        return ret;
+      int value = gpiod_line_request_get_value(ctx->irq_req, CXD5610_INT_GPIO);
+      if (value < 0)
+        return -errno;
+      ctx->irq_wait_started = true;
+      if (value == GPIOD_LINE_VALUE_ACTIVE)
+        {
+          ctx->irq_part_ready = true;
+          return 0;
+        }
+    }
+
+  struct pollfd pfd = {
+    .fd = gpiod_line_request_get_fd(ctx->irq_req),
+    .events = POLLIN
+  };
   int pret = poll(&pfd, 1, timeout_ms);
   if (pret == 0)
-    {
-      return -ETIMEDOUT;
-    }
+    return -ETIMEDOUT;
   if (pret < 0)
-    {
-      return -errno;
-    }
-
+    return -errno;
+  if (!(pfd.revents & POLLIN))
+    return -EIO;
   int n = gpiod_line_request_read_edge_events(ctx->irq_req, ctx->evbuf, 16);
   if (n <= 0)
-    {
-      return -EIO;
-    }
-
+    return n < 0 ? -errno : -EIO;
+  ctx->irq_part_ready = true;
   return 0;
+}
+
+static int read_part(struct cxd5610_ctx *ctx, uint8_t *buf, size_t size,
+                     int timeout_ms)
+{
+  int ret = wait_irq(ctx, timeout_ms);
+  if (ret < 0)
+    return ret;
+  /* Consume old edges before the read can prepare the next part. */
+  ret = discard_irq_events(ctx);
+  if (ret < 0)
+    return ret;
+  ctx->irq_part_ready = false;
+  ret = read_exact(ctx->i2c_fd, buf, size);
+  if (ret < 0)
+    ctx->transport_error = ret;
+  return ret;
 }
 
 static int read_packet(struct cxd5610_ctx *ctx,
@@ -355,163 +395,72 @@ static int read_packet(struct cxd5610_ctx *ctx,
                        int timeout_ms,
                        bool quiet)
 {
-  uint8_t header[PACKET_HEADERLEN];
+  if (ctx->transport_error)
+    return ctx->transport_error;
+
   int ret;
-
-  if (timeout_ms == 0)
+  int64_t deadline = timeout_ms > 0 ? monotonic_ms() + timeout_ms : 0;
+  if (!ctx->rx_pending)
     {
-      ret = 0; /* explicit poll mode: skip IRQ wait */
-    }
-  else
-    {
-      ret = wait_irq(ctx, timeout_ms);
+      uint8_t header[PACKET_HEADERLEN];
+      ret = read_part(ctx, header, sizeof(header), timeout_ms);
       if (ret < 0)
+        return ret;
+      if (header[0] != PACKET_SYNC || header[4] != cxd_checksum(header, 4))
         {
-          return ret;
+          /* Byte scanning would issue invalid I2C transaction lengths. */
+          if (!quiet)
+            fprintf(stderr, "[ERR] invalid I2C packet header\n");
+          ctx->transport_error = -EBADMSG;
+          return -EBADMSG;
         }
-    }
-  memset(header, 0, sizeof(header));
-  ret = read_exact(ctx->i2c_fd, header, sizeof(header));
-  if (ret < 0)
-    {
-      return ret;
+      ctx->rx_opcode = header[3];
+      ctx->rx_length = le16(&header[1]);
+      ctx->rx_offset = 0;
+      ctx->rx_checksum = 0;
+      size_t maxlen = ctx->rx_opcode < OPC_TIME_NOTIFY ?
+                     sizeof(ctx->rcvbuf) : sizeof(ctx->notifybuf);
+      ctx->rx_discard = (size_t)ctx->rx_length + 1 > maxlen;
+      ctx->rx_pending = true;
     }
 
-  if (header[0] != PACKET_SYNC)
+  uint8_t *buf = ctx->rx_opcode < OPC_TIME_NOTIFY ? ctx->rcvbuf : ctx->notifybuf;
+  size_t total = ctx->rx_length ? (size_t)ctx->rx_length + 1 : 0;
+  uint8_t expected_checksum = 0;
+  while (ctx->rx_offset < total)
+    {
+      size_t size = total - ctx->rx_offset;
+      if (size > PACKET_MAXLEN)
+        size = PACKET_MAXLEN;
+      uint8_t discard[PACKET_MAXLEN];
+      uint8_t *part = ctx->rx_discard ? discard : buf + ctx->rx_offset;
+      int remaining = timeout_ms > 0 ? (int)(deadline - monotonic_ms()) : timeout_ms;
+      if (timeout_ms > 0 && remaining <= 0)
+        return -ETIMEDOUT;
+      ret = read_part(ctx, part, size, remaining);
+      if (ret < 0)
+        return ret;
+      bool last = ctx->rx_offset + size == total;
+      for (size_t i = 0; i < size - (last ? 1 : 0); i++)
+        ctx->rx_checksum += part[i];
+      if (last)
+        expected_checksum = part[size - 1];
+      ctx->rx_offset += size;
+    }
+
+  ctx->rx_pending = false;
+  if (total && ctx->rx_checksum != expected_checksum)
     {
       if (!quiet)
-        {
-          fprintf(stderr, "[ERR] sync byte mismatch: 0x%02x\n", header[0]);
-        }
-      /* Try to re-sync by scanning upcoming bytes for PACKET_SYNC */
-      for (int i = 0; i < 64; i++)
-        {
-          uint8_t b;
-          ret = read_exact(ctx->i2c_fd, &b, 1);
-          if (ret < 0)
-            {
-              return ret;
-            }
-          if (b == PACKET_SYNC)
-            {
-              header[0] = b;
-              ret = read_exact(ctx->i2c_fd, &header[1], PACKET_HEADERLEN - 1);
-              if (ret < 0)
-                {
-                  return ret;
-                }
-              goto header_ready;
-            }
-        }
-      return -EAGAIN; /* give caller a chance to retry without aborting */
+        fprintf(stderr, "[ERR] payload checksum opc=0x%02x len=%u\n",
+                ctx->rx_opcode, ctx->rx_length);
+      return -EAGAIN;
     }
-
-header_ready:;
-  uint16_t oprlen = le16(&header[1]);
-  uint8_t opc = header[3];
-
-  if (header[4] != cxd_checksum(header, 4))
-    {
-      if (!quiet)
-        {
-          fprintf(stderr, "[ERR] header checksum opc=0x%02x len=%u\n", opc, oprlen);
-        }
-      /* Attempt to resync once */
-      for (int i = 0; i < 64; i++)
-        {
-          uint8_t b;
-          ret = read_exact(ctx->i2c_fd, &b, 1);
-          if (ret < 0)
-            {
-              return ret;
-            }
-          if (b == PACKET_SYNC)
-            {
-              header[0] = b;
-              ret = read_exact(ctx->i2c_fd, &header[1], PACKET_HEADERLEN - 1);
-              if (ret < 0)
-                {
-                  return ret;
-                }
-              oprlen = le16(&header[1]);
-              opc = header[3];
-              if (header[4] == cxd_checksum(header, 4))
-                {
-                  break;
-                }
-              /* checksum still bad, keep searching */
-            }
-        }
-      /* if still bad, let caller reopen */
-      if (header[4] != cxd_checksum(header, 4))
-        {
-          return -EAGAIN;
-        }
-    }
-
-  uint8_t *buf = (opc < OPC_TIME_NOTIFY) ? ctx->rcvbuf : ctx->notifybuf;
-  size_t maxlen = (opc < OPC_TIME_NOTIFY) ? sizeof(ctx->rcvbuf) : sizeof(ctx->notifybuf);
-
-  if ((size_t)oprlen + 1 > maxlen)
-    {
-      fprintf(stderr, "[ERR] buffer too small opc=0x%02x len=%u\n", opc, oprlen);
-      return -EOVERFLOW;
-    }
-
-  if (oprlen > 0)
-    {
-      ret = wait_irq(ctx, timeout_ms);
-      if (ret < 0)
-        {
-          return ret;
-        }
-
-      int totallen = oprlen + 1; /* payload + checksum */
-      int num = PACKET_NR(totallen);
-      int rcvlen = (totallen > PACKET_MAXLEN) ? PACKET_MAXLEN : totallen;
-      uint8_t *dst = buf;
-
-      ret = read_exact(ctx->i2c_fd, dst, rcvlen);
-      if (ret < 0)
-        {
-          return ret;
-        }
-
-      int remaining = totallen - rcvlen;
-      dst += PACKET_MAXLEN;
-
-      while (--num > 0)
-        {
-          ret = wait_irq(ctx, timeout_ms);
-          if (ret < 0)
-            {
-              return ret;
-            }
-
-          rcvlen = (remaining > PACKET_MAXLEN) ? PACKET_MAXLEN : remaining;
-          ret = read_exact(ctx->i2c_fd, dst, rcvlen);
-          if (ret < 0)
-            {
-              return ret;
-            }
-
-          remaining -= rcvlen;
-          dst += PACKET_MAXLEN;
-        }
-
-      if (buf[oprlen] != cxd_checksum(buf, oprlen))
-        {
-      if (!quiet)
-        {
-          fprintf(stderr, "[ERR] payload checksum opc=0x%02x len=%u\n", opc, oprlen);
-        }
-          return -EAGAIN;
-        }
-    }
-
-  *opc_out = opc;
-  *payload_out = (oprlen > 0) ? buf : NULL;
-  *len_out = oprlen;
+  if (ctx->rx_discard)
+    return -EOVERFLOW;
+  *opc_out = ctx->rx_opcode;
+  *payload_out = ctx->rx_length ? buf : NULL;
+  *len_out = ctx->rx_length;
   return 0;
 }
 
@@ -764,79 +713,96 @@ static void handle_notify(struct cxd5610_ctx *ctx,
 }
 
 /* Command helpers */
+static int64_t monotonic_ms(void)
+{
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
+static int finish_pending_packet(struct cxd5610_ctx *ctx, int64_t deadline)
+{
+  while (ctx->rx_pending)
+    {
+      int remaining = (int)(deadline - monotonic_ms());
+      if (remaining <= 0)
+        return -ETIMEDOUT;
+      uint8_t opc, *payload;
+      uint16_t len;
+      int ret = read_packet(ctx, &opc, &payload, &len, remaining, false);
+      if (ret == -EINTR)
+        continue;
+      if (ret < 0)
+        return ret;
+      if (opc >= OPC_TIME_NOTIFY)
+        handle_notify(ctx, opc, payload, len);
+    }
+  return 0;
+}
+
 static int send_command(struct cxd5610_ctx *ctx,
                         uint8_t opc,
                         const void *opr,
                         size_t oprlen,
                         int timeout_ms)
 {
-  if (PACKET_LEN(oprlen) > sizeof(ctx->sndbuf))
-    {
-      return -EINVAL;
-    }
+  if (PACKET_LEN(oprlen) > sizeof(ctx->sndbuf) || timeout_ms <= 0)
+    return -EINVAL;
+  if (ctx->transport_error)
+    return ctx->transport_error;
+  int64_t deadline = monotonic_ms() + timeout_ms;
+  /* Complete the pending notification before starting another exchange. */
+  int ret = finish_pending_packet(ctx, deadline);
+  if (ret < 0)
+    return ret;
 
   uint8_t *pkt = ctx->sndbuf;
   size_t buflen = PACKET_HEADERLEN;
-
   pkt[0] = PACKET_SYNC;
   pkt[1] = (uint8_t)(oprlen & 0xff);
   pkt[2] = (uint8_t)(oprlen >> 8);
   pkt[3] = opc;
   pkt[4] = cxd_checksum(pkt, 4);
-
   if (opr && oprlen > 0)
     {
       memcpy(&pkt[5], opr, oprlen);
       pkt[5 + oprlen] = cxd_checksum(&pkt[5], oprlen);
-      buflen += (oprlen + 1);
+      buflen += oprlen + 1;
     }
-
-  int ret = write_exact(ctx->i2c_fd, pkt, buflen);
+  ret = write_exact(ctx->i2c_fd, pkt, buflen);
   if (ret < 0)
     {
+      ctx->transport_error = ret;
       return ret;
     }
 
-  /* Wait for the command response, printing any async notify on the way. */
-  bool first_try = true;
-  while (!g_stop)
+  /* Cleanup must still receive STOP's ACK after SIGINT/SIGTERM. */
+  for (;;)
     {
-      uint8_t ropc;
-      uint8_t *payload;
+      int remaining = (int)(deadline - monotonic_ms());
+      if (remaining <= 0)
+        return -ETIMEDOUT;
+      uint8_t ropc, *payload;
       uint16_t rlen;
-
-      int use_timeout = first_try ? 0 : timeout_ms;
-      ret = read_packet(ctx, &ropc, &payload, &rlen, use_timeout, first_try);
-      first_try = false;
+      ret = read_packet(ctx, &ropc, &payload, &rlen, remaining, false);
+      if (ret == -EINTR)
+        continue;
       if (ret < 0)
+        return ret;
+      if (ropc == opc)
+        return rlen > 0 ? (int8_t)payload[0] : -EBADMSG;
+      if (ropc == 0xff)
+        return -EPROTO;
+      if (ropc == OPC_SYS_STATE_CHANGE_INSTRUCTION && rlen > 0)
         {
-          return ret;
+          if (payload[0] == STATE_RESET)
+            ctx->boot_seen = true;
+          else if (payload[0] == STATE_WAKEUP)
+            ctx->sleeping = false;
         }
-
-      if (ropc < OPC_TIME_NOTIFY)
-        {
-          if (ropc == OPC_SYS_STATE_CHANGE_INSTRUCTION && rlen > 0)
-            {
-              if (payload[0] == STATE_RESET)
-                {
-                  ctx->boot_seen = true;
-                }
-              else if (payload[0] == STATE_WAKEUP)
-                {
-                  ctx->sleeping = false;
-                }
-            }
-
-          int8_t err = (rlen > 0) ? (int8_t)payload[0] : 0;
-          return err;
-        }
-      else
-        {
-          handle_notify(ctx, ropc, payload, rlen);
-        }
+      else if (ropc >= OPC_TIME_NOTIFY)
+        handle_notify(ctx, ropc, payload, rlen);
     }
-
-  return -EINTR;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -970,9 +936,8 @@ static int configure_session(struct cxd5610_ctx *ctx)
       return ret;
     }
 
-  /* Satellite system setting: enable all */
-  //uint8_t sat_setting[] = {0b00110101, 0b00000011}; // for GPS+QZSS
-  uint8_t sat_setting[] = {0b11110111, 0b00111111}; // for all
+  /* Enable all supported signals; reserved bit 4 must remain clear. */
+  uint8_t sat_setting[] = {0xef, 0x3f};
   ret = send_command(ctx, OPC_GNSS_SAT_SETTING, sat_setting,
                      sizeof(sat_setting), 3000);
   if (ret == -ETIMEDOUT || ret == -EAGAIN)
@@ -1053,7 +1018,10 @@ static bool cxd5610_should_continue(struct cxd5610_ctx *ctx)
     }
   if (ctx->lock_initialized)
     {
-      return ctx->running;
+      pthread_mutex_lock(&ctx->lock);
+      bool running = ctx->running;
+      pthread_mutex_unlock(&ctx->lock);
+      return running;
     }
   return false;
 }
@@ -1084,7 +1052,7 @@ static void *cxd5610_worker(void *arg)
       uint8_t *payload;
       uint16_t len;
 
-      ret = read_packet(ctx, &opc, &payload, &len, -1, first_loop);
+      ret = read_packet(ctx, &opc, &payload, &len, 200, first_loop);
       if (ret < 0)
         {
           if (!cxd5610_should_continue(ctx))
@@ -1092,7 +1060,19 @@ static void *cxd5610_worker(void *arg)
               break;
             }
 
-          if (ret == -EAGAIN || ret == -ETIMEDOUT)
+          /* Keep the packet phase across idle waits and interrupted reads. */
+          if (ret == -ETIMEDOUT || ret == -EINTR)
+            continue;
+          if (ctx->transport_error)
+            {
+              pthread_mutex_lock(&ctx->lock);
+              ctx->data_valid = false;
+              ctx->last_opc = ret;
+              pthread_mutex_unlock(&ctx->lock);
+              fprintf(stderr, "[CXD5610] transport failed: %s\n", strerror(-ret));
+              break;
+            }
+          if (ret == -EAGAIN)
             {
               if (first_loop)
                 {
@@ -1346,27 +1326,25 @@ int cxd5610_peek(struct cxd5610_ctx *ctx, struct cxd5610_data *out)
   return -ENOTSUP;
 }
 
-void cxd5610_close(struct cxd5610_ctx *ctx)
+int cxd5610_shutdown(struct cxd5610_ctx *ctx)
 {
   if (!ctx)
-    {
-      return;
-    }
-
+    return 0;
   cxd5610_join_and_destroy_sync(ctx);
-
-  /* Attempt to stop GNSS cleanly once worker is gone */
-  if (ctx->i2c_fd >= 0)
-    {
-      int ret = send_command(ctx, OPC_GNSS_STOP, NULL, 0, 1000);
-      if (ret < 0)
-        {
-          fprintf(stderr, "[CXD5610] stop during close failed: %s\n", strerror(-ret));
-        }
-    }
-
+  int ret = 0;
+  /* Initialization can fail before either GPIO resource exists. */
+  if (ctx->i2c_fd >= 0 && ctx->irq_req && ctx->evbuf)
+    ret = send_command(ctx, OPC_GNSS_STOP, NULL, 0, 5000);
   cleanup(ctx);
   free(ctx);
+  return ret;
+}
+
+void cxd5610_close(struct cxd5610_ctx *ctx)
+{
+  int ret = cxd5610_shutdown(ctx);
+  if (ret < 0)
+    fprintf(stderr, "[CXD5610] stop during close failed: %s\n", strerror(-ret));
 }
 
 
@@ -1375,6 +1353,7 @@ int main(void)
 {
   cxd5610_ctx *ctx = NULL;
   signal(SIGINT, handle_sigint);
+  signal(SIGTERM, handle_sigint);
 
   int ret = cxd5610_create(&ctx);
   if (ret < 0 || !ctx)
@@ -1407,7 +1386,12 @@ int main(void)
       sleep(1);
     }
 
-  cxd5610_close(ctx);
+  ret = cxd5610_shutdown(ctx);
+  if (ret < 0)
+    {
+      fprintf(stderr, "[CLI ] stop failed: %s\n", strerror(-ret));
+      return EXIT_FAILURE;
+    }
   return EXIT_SUCCESS;
 }
 
