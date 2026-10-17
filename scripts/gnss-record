@@ -1,0 +1,144 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Collect RTCM inside screen, retaining private logs until an orderly stop.
+set -euo pipefail
+umask 077
+
+script=$(readlink -f -- "${BASH_SOURCE[0]}")
+source_root=$(cd -- "$(dirname -- "$script")/.." && pwd)
+state_root=${XDG_STATE_HOME:-$HOME/.local/state}/rpi-cxd56xx-gnss/recordings
+session=${GNSS_SCREEN_SESSION:-gnss-rtcm}
+python=${GNSS_PYTHON:-python3}
+# Keep recorder sessions independent of system/user screen startup commands.
+export SYSSCREENRC=/dev/null
+
+usage() {
+    cat <<'HELP'
+Usage: gnss-record [--detach | --foreground] [capture options]
+       gnss-record status
+
+Run without options to start or reattach to the recording screen.
+Detach and keep collecting: Ctrl+A, then D
+Reconnect: run gnss-record again
+Stop and save the result: Ctrl+C inside screen
+
+Capture options include --duration SECONDS and --log-dir PATH.
+Without --duration, collection continues until interrupted.
+--detach starts in the background without requiring a terminal.
+--foreground runs directly, useful inside an existing screen session.
+HELP
+}
+
+if [[ ${1:-} == --help || ${1:-} == -h ]]; then
+    usage
+    exit 0
+fi
+if [[ ! $session =~ ^[A-Za-z0-9_-]+$ ]]; then
+    echo 'Invalid GNSS_SCREEN_SESSION.' >&2
+    exit 1
+fi
+
+find_session() {
+    { screen -ls 2>/dev/null || true; } |
+        awk -v target="$session" '$1 ~ /^[0-9]+\./ { name=$1; sub(/^[0-9]+\./, "", name); if (name == target) print $1 }'
+}
+
+if [[ ${1:-} == status ]]; then
+    screen -ls "$session" || true
+    if [[ -L $state_root/latest ]]; then
+        latest=$(readlink -f -- "$state_root/latest")
+        printf 'Latest logs: %s\n' "$latest"
+        "$python" - "$latest" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1])
+summary = root / "summary.json"
+if summary.exists():
+    data = json.loads(summary.read_text())
+    print("RTCM frames:", data.get("valid_rtcm_frames"), "CRC errors:", data.get("crc_errors"))
+    print("Cleanup acknowledged:", data.get("normal_notifications_restored"))
+else:
+    capture = root / "notifications.bin"
+    print("Collected bytes:", capture.stat().st_size if capture.exists() else 0)
+PY
+    fi
+    exit 0
+fi
+
+foreground=false
+detached=false
+if [[ ${1:-} == --foreground ]]; then
+    foreground=true
+    shift
+elif [[ ${1:-} == --detach ]]; then
+    detached=true
+    shift
+fi
+
+if ! $foreground && [[ -z ${STY:-} ]]; then
+    command -v screen >/dev/null || { echo 'Install screen first: sudo apt install screen' >&2; exit 1; }
+    existing=$(find_session)
+    if [[ -n $existing ]]; then
+        if [[ $existing == *$'\n'* ]]; then
+            echo 'Multiple recording sessions found; use screen -ls to select one.' >&2
+            exit 1
+        fi
+        if $detached; then
+            printf 'Already running: %s\n' "$existing"
+            exit 0
+        fi
+        exec screen -c /dev/null -r "$existing"
+    fi
+    if $detached; then
+        exec screen -c /dev/null -dmS "$session" "$script" --foreground "$@"
+    fi
+    if [[ ! -t 0 ]]; then
+        echo 'Use an SSH terminal (ssh -t), or start with --detach.' >&2
+        exit 1
+    fi
+    exec screen -c /dev/null -U -S "$session" "$script" --foreground "$@"
+fi
+
+for required in gpioinfo cc "$python"; do
+    command -v "$required" >/dev/null || { printf 'Required command missing: %s\n' "$required" >&2; exit 1; }
+done
+irq=${GNSS_IRQ_LINE:-17}
+if [[ -n ${GNSS_GPIO_CHIP:-} ]]; then
+    chip=$GNSS_GPIO_CHIP
+    gpioinfo --chip "$chip" "$irq" >/dev/null
+else
+    # Resolve the named line across chips instead of fixing a chip number.
+    info=$(gpioinfo --strict --by-name "GPIO$irq")
+    read -r chip irq remainder <<<"$info"
+    [[ $chip == gpiochip* && $irq =~ ^[0-9]+$ ]] || { echo 'Cannot identify the IRQ line.' >&2; exit 1; }
+    chip=/dev/$chip
+fi
+
+mkdir -p -- "$state_root"
+log_dir=$state_root/$(date -u +%Y%m%dT%H%M%SZ)-$$
+timing=(--continuous)
+arguments=("$@")
+for ((index=0; index<${#arguments[@]}; index++)); do
+    option=${arguments[index]}
+    if [[ $option == --duration || $option == --duration=* || $option == --continuous ]]; then
+        timing=()
+    fi
+    if [[ $option == --log-dir ]]; then
+        ((index + 1 < ${#arguments[@]})) || { echo '--log-dir requires a path.' >&2; exit 2; }
+        log_dir=${arguments[index+1]}
+    elif [[ $option == --log-dir=* ]]; then
+        log_dir=${option#--log-dir=}
+    fi
+done
+log_dir=$("$python" -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).expanduser().resolve())' "$log_dir")
+# The Python helper rejects logs inside a Git checkout and creates a fresh path.
+ln -sfn -- "$log_dir" "$state_root/latest"
+printf 'Logs: %s\n' "$log_dir"
+printf 'Detach: Ctrl+A then D | Stop: Ctrl+C\n'
+exec "$python" -u "$source_root/examples/i2c_rtcm_test.py" \
+    --gpio-chip "$chip" --irq-line "$irq" \
+    --i2c-device "${GNSS_I2C_DEVICE:-/dev/i2c-1}" --address "${GNSS_I2C_ADDRESS:-0x24}" \
+    --rtcm-mask 0x07102202 --gnss-mask 0x3fef \
+    --log-dir "$log_dir" "${timing[@]}" "$@"
