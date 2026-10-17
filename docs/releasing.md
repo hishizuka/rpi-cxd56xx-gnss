@@ -10,49 +10,10 @@ C extension on their Raspberry Pi with their GPIO settings. System dependencies
 such as libgpiod are installed separately through the [setup guide](setup.md).
 The English README is also the package description on PyPI.
 
-## First GitHub publication
-
-Create an empty **public** repository named `rpi-cxd56xx-gnss`, owned by
-`hishizuka`. Leave automatic README, `.gitignore` and license creation disabled;
-these files are already included locally.
-
-Review the initial commit contents, then run from the repository root:
-
-```sh
-git add .
-git diff --cached --stat
-git commit -m "Initial release"
-git branch -M main
-git remote add origin git@github.com:hishizuka/rpi-cxd56xx-gnss.git
-git push -u origin main
-```
-
 On pushes to `main` and pull requests, **Build and publish** creates an sdist,
 checks its metadata, builds a wheel and checks imports in Debian Trixie with
 Python 3.13 and libgpiod 2.x. It does not open a GNSS device. Uploading to a
 package index requires a manual workflow run.
-
-## Configure PyPI and TestPyPI
-
-[PyPI](https://pypi.org/account/register/) and
-[TestPyPI](https://test.pypi.org/account/register/) are separate services.
-Create an account on each service, verify its email address, and enable
-two-factor authentication (2FA). Accounts and login sessions are separate.
-[2FA is required for publisher management](https://blog.pypi.org/posts/2024-01-01-2fa-enforced/).
-Then open **Publishing** in each account's settings and add a GitHub Pending Publisher:
-
-| Field | PyPI | TestPyPI |
-| --- | --- | --- |
-| PyPI project name | `rpi-cxd56xx-gnss` | `rpi-cxd56xx-gnss` |
-| Owner | `hishizuka` | `hishizuka` |
-| Repository name | `rpi-cxd56xx-gnss` | `rpi-cxd56xx-gnss` |
-| Workflow name | `publish.yml` | `publish.yml` |
-| Environment name | `pypi` | `testpypi` |
-
-Create matching `pypi` and `testpypi` environments under the GitHub repository's
-**Settings → Environments**. No API token needs to be copied. The first upload
-creates the project; registering a Pending Publisher alone does not reserve
-the package name. See [PyPI's new-project publishing guide](https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/).
 
 ## Publish a version
 

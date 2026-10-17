@@ -9,46 +9,9 @@
 libgpiod などのシステム依存パッケージは、[セットアップ手順](setup.md)に従って別途インストールします。
 PyPI のパッケージ説明にも英語版 README を使用します。
 
-## GitHub への初回公開
-
-所有者 `hishizuka`、名前 `rpi-cxd56xx-gnss` の空の **public** リポジトリを作成します。
-README・`.gitignore`・ライセンスの自動作成は無効にしてください。これらのファイルはローカルに用意済みです。
-
-初回コミットに含める内容を確認し、リポジトリのルートで実行します。
-
-```sh
-git add .
-git diff --cached --stat
-git commit -m "Initial release"
-git branch -M main
-git remote add origin git@github.com:hishizuka/rpi-cxd56xx-gnss.git
-git push -u origin main
-```
-
 `main` への push とプルリクエストでは、**Build and publish** が sdist を作成してメタデータを検証し、
 Debian Trixie、Python 3.13、libgpiod 2.x の環境で wheel のビルドとインポートを確認します。
 GNSS デバイスは開きません。パッケージインデックスへのアップロードには、ワークフローの手動実行が必要です。
-
-## PyPI と TestPyPI の設定
-
-[PyPI](https://pypi.org/account/register/) と [TestPyPI](https://test.pypi.org/account/register/) は別のサービスです。
-両方にアカウントを作成し、それぞれメールアドレスの確認と二要素認証（2FA）の設定を完了してください。
-アカウントとログイン状態はサービスごとに独立しています。
-[公開元の管理には二要素認証が必要です](https://blog.pypi.org/posts/2024-01-01-2fa-enforced/)。
-その後、それぞれのアカウント設定から **Publishing** を開いて GitHub Pending Publisher を追加します。
-
-| 項目 | PyPI | TestPyPI |
-| --- | --- | --- |
-| PyPI project name | `rpi-cxd56xx-gnss` | `rpi-cxd56xx-gnss` |
-| Owner | `hishizuka` | `hishizuka` |
-| Repository name | `rpi-cxd56xx-gnss` | `rpi-cxd56xx-gnss` |
-| Workflow name | `publish.yml` | `publish.yml` |
-| Environment name | `pypi` | `testpypi` |
-
-GitHub リポジトリの **Settings → Environments** に、同じ名前の `pypi` と `testpypi` 環境を作成します。
-API トークンをコピーする必要はありません。プロジェクトは初回アップロード時に作成されます。
-Pending Publisher の登録だけではパッケージ名は予約されません。
-[PyPI の新規プロジェクト公開ガイド](https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/)を参照してください。
 
 ## バージョンの公開
 

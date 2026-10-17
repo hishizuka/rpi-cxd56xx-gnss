@@ -8,3 +8,24 @@ dist/
 wheelhouse/
 /tmp/
 .DS_Store
+
+# Keep credentials, firmware packages and receiver recordings local.
+.env
+.env.*
+*.pem
+*.key
+gnss_addon_fw_updater_*.zip
+*.spk
+*.efpk
+*.bin
+*.rtcm
+*.rtcm3
+*.obs
+*.nav
+*.pos
+*.pos.stat
+*.log
+*.jsonl
+logs/
+captures/
+recordings/
