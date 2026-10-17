@@ -56,6 +56,21 @@ handling and the public API. The extraction adds standalone build metadata,
 Python package imports, CLI packaging, documentation and overridable build
 defaults. The GNSS protocol still follows the original port.
 
+## Sony SIoT-Majipro update protocol
+
+- Repository: https://github.com/sony/SIoT-Majipro
+- Reference revision: `36d30533c9e419389b4367d2448bb6ce8aa2dfaa`.
+- [Reference updater](https://github.com/sony/SIoT-Majipro/blob/36d30533c9e419389b4367d2448bb6ce8aa2dfaa/applications/fwupdate/cxd5610/src/update_main.c).
+- Source header: Copyright 2024 Sony Group Corporation, SPDX `Apache-2.0`.
+- Local files: `examples/i2c_firmware_update.py` and the shared packet/image
+  helpers used by `examples/uart_firmware_update.py`.
+
+The update command sequence and framing were adapted to Python, Linux I2C/GPIO
+and UART. The local tools add package/image hash validation, explicit write
+modes, version checks and private logs. No Sony firmware image is distributed.
+The Spresense v144 package must be obtained separately under Sony's terms;
+the source-code license does not grant rights to redistribute its firmware.
+
 ## Dependencies
 
 libgpiod is an external system library; Cython and setuptools are build

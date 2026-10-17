@@ -20,3 +20,9 @@ receiver and snapshot API, Cython bindings, and standalone packaging.
 See THIRD_PARTY.md for source provenance and the limits of that record.
 
 The Apache License 2.0 text is included in LICENSE.
+
+The firmware update command sequence in examples/i2c_firmware_update.py is
+adapted from Sony SIoT-Majipro's CXD5610 updater:
+Copyright 2024 Sony Group Corporation
+SPDX-License-Identifier: Apache-2.0
+See THIRD_PARTY.md for the reference revision and local changes.
