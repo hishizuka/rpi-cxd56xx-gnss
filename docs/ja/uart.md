@@ -131,7 +131,8 @@ python examples/uart_read.py /dev/ttyS0 --gns 0x032d
 
 ## I2C の衛星設定
 
-`CXD56xx` クラスと [I2C サンプル](../../examples/i2c_read.py)は、現在 C ドライバー内の固定設定を使用します。
-`--gns` は UART サンプル用の引数です。I2C の衛星設定を変更する場合は、受信機のバイナリープロトコル仕様に従って
-[cxd5610_rpi.c](../../src/cxd56xx_gnss/cxd5610_rpi.c) の `configure_session()` 内にある `sat_setting` を変更し、再ビルドしてください。
+`CXD56xx` クラスと [I2C サンプル](../../examples/i2c_read.py)は、
+[稼働中も切り替えられるQZSS L1S・災危通報設定](api.md#qzss-災危通報i2c)を除き、Cドライバー内の固定設定を使用します。
+`--gns` は UART サンプル用の引数です。その他のI2C衛星設定を変更する場合は、受信機のバイナリープロトコル仕様に従って
+[cxd5610_rpi.c](../../src/cxd56xx_gnss/cxd5610_rpi.c) の `configure_dcreport()` 内にある `sat_setting` を変更し、再ビルドしてください。
 UART のマスクをそのままバイナリープロトコルの設定に代入しないでください。

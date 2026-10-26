@@ -136,9 +136,10 @@ supported bands and the reception environment.
 
 ## I2C satellite settings
 
-The `CXD56xx` class and [I2C example](../examples/i2c_read.py) currently use fixed
-settings in the C driver. `--gns` belongs to the UART example. To change I2C
-satellite settings, edit `sat_setting` in `configure_session()` in
+The `CXD56xx` class and [I2C example](../examples/i2c_read.py) use fixed
+settings in the C driver, except for the runtime [QZSS L1S/DC report setting](api.md#qzss-disaster-and-crisis-reports-i2c).
+`--gns` belongs to the UART example. To change other I2C satellite settings,
+edit `sat_setting` in `configure_dcreport()` in
 [cxd5610_rpi.c](../src/cxd56xx_gnss/cxd5610_rpi.c) according to the receiver's
 binary protocol specification and rebuild. Do not substitute a UART mask
 directly for the binary protocol settings.

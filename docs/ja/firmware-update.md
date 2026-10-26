@@ -6,14 +6,17 @@
 
 `examples/` にある独立したツールです。リポジトリまたは展開したソース配布物のルートから実行します。
 pipのコマンドとしてはインストールされません。Piから直接更新する部分は本プロジェクトの実装です。
+コピーして使う場合は `examples/` をまとめて配置してください。3種類の更新ツールは、
+リファクタリング後に同じディレクトリの `_firmware_common.py` も読み込みます。
 Sonyの[公式更新手順](https://developer.spresense.sony-semicon.com/ja/downloads/gnss-addon-fw-updater/manual)はSpresenseメインボードを使用します。
 
 | ツール | 対象 | 確認状況 |
 | --- | --- | --- |
-| `i2c_firmware_update.py` | Spresense GNSS Add-on Board、CXD5610GF | I2Cでv00.103 → v00.144へ更新した[実機記録](rtcm.md#i2c-firmware-update)あり |
-| `uart_firmware_update.py` | 実験用のRYS8839/CXD5610GF向け経路 | ファームウェア互換性・実機での更新成功は未確認。RYS8833/CXD5605は対象外 |
+| `i2c_firmware_update.py` | Spresense GNSS Add-on Board、CXD5610GF | v144の5イメージ更新の[実機記録](rtcm.md#i2c-firmware-update)あり。実験用のv201コード＋元のSony CFG再投入プロファイルも用意 |
+| `uart_firmware_update.py` | 実験用のRYS8839/CXD5610GF向け経路 | RYS8839_Liteの1個体でCFG・消去命令なしのv00.129 → v00.144更新、UART測位・RTCMを確認。RYS8833/CXD5605は対象外 |
+| `i2c_firmware_update_preserve.py` | CFGを送らないI2C更新・検査 | 検証済みのSony v144／別途取得したv201コードだけを受け付ける実験用経路。CFG・消去・設定書込みを送信段階でも拒否 |
 
-どちらも既定ではオフライン検査だけを行い、**`--write` を指定したときだけ書き込みます**。
+各ツールとも既定ではオフライン検査だけを行い、**`--write` を指定したときだけ書き込みます**。
 I2C版には、現在の版を読み取るだけの `--query` もあります。
 
 ## 入力と依存関係
@@ -82,6 +85,12 @@ RAM上の更新プログラム、SDK、アプリ、ライブラリ、**Spresense
 eMRAM全体の読み戻し比較は実装していません。更新後は通常リーダーと、必要に応じて
 [RTCM収集](rtcm.md)を別々に確認してください。
 
+`v144 --write --enter-mode erase` でも、更新モード中だけSony実装と同じ100ms待機後のIRQ High確認を使い、
+ヘッダーから本文までIRQがHighのままになるブートローダーに対応します。通常測位には適用しません。
+消去要求の応答待ちでタイムアウトし、イメージ転送がまだ始まっていない場合に限り、
+同じ入力と版の失敗ログを `--resume-after-erase /path/to/failed-update-log` で照合して再開できます。
+ライブのブートローダー判定後にRAM updaterから進み、再消去・STOP・途中イメージの自動再送は行いません。
+
 <a id="experimental-uart-update"></a>
 
 ## 実験用UART更新
@@ -122,7 +131,7 @@ UART電圧とシリアルコンソールの無効化は[UARTガイド](uart.md)�
 
 ## ログとエラー時の扱い
 
-両方が `events.jsonl`・`summary.json` を保存します。UART版の `uart-rx.bin` には
+各ツールが `events.jsonl`・`summary.json` を保存します。UART版の `uart-rx.bin` には
 NMEA座標が含まれる可能性があります。引数とローカルパスも記録するため、Git管理外に置き、共有前に内容を確認してください。
 新規ログディレクトリは所有者のみアクセスでき、既存ディレクトリは再利用しません。
 I2C版の既定保存先は `$XDG_STATE_HOME/rpi-cxd56xx-gnss/`、未設定時は `~/.local/state/rpi-cxd56xx-gnss/` 配下です。
@@ -131,4 +140,114 @@ I2C版の既定保存先は `$XDG_STATE_HOME/rpi-cxd56xx-gnss/`、未設定時�
 `2` は引数エラーです。不正な入力ファイルはデバイスを開く前に失敗します。
 オフライン時の `completed=true` は検査完了だけを表します。書き込み時は `verified_version` も確認してください。
 失敗した場合はログを保全し、最後に応答を確認した段階と受信機の状態を調べてから復旧を検討します。
-どちらもファームウェアの自動再送・エラー後の自動消去やリセット・書き込み済みイメージの巻き戻しは行いません。
+各ツールともファームウェアの自動再送・エラー後の自動消去やリセット・書き込み済みイメージの巻き戻しは行いません。
+
+## CFGを送らないI2Cコード更新
+
+`examples/i2c_firmware_update_preserve.py` は既存の5イメージ更新とは別の経路です。
+`--profile v144` または `--profile v201` で、固定したファイル名・サイズ・SHA-256・更新先版を選びます。
+ファームウェアは同梱しません。別途取得したv201の別基板での動作は実機ごとの検証が必要です。
+
+入力ディレクトリには、選択した版のRAM updater・SDK・APP・LIBの4ファイルだけを置きます。
+v201のupdater名は `cxd5610_updater.efpk`、v144は `updater.efpk` です。
+CFGを含むディレクトリ、異なる版の混在、不明な追加ファイルはデバイスを開く前に拒否します。
+任意のイメージへ検査を緩めるオプションはありません。
+
+```sh
+python3 examples/i2c_firmware_update_preserve.py \
+  --profile v201 --image-dir "/path/to/audited-v201-code-only"
+```
+
+既定はオフライン計画で、249フレームの一覧と書込み先 `000000`・`010000`・`020000` を記録します。
+版と読出し可能な運用設定だけを取得する場合：
+
+```sh
+python3 examples/i2c_firmware_update_preserve.py \
+  --profile v201 --query --gpio-chip /dev/gpiochip0 --irq-line 17
+```
+
+対象実機の現在版・配線・入力を確認した上で実験用更新を実施する場合：
+
+```sh
+python3 examples/i2c_firmware_update_preserve.py --write \
+  --profile v201 --image-dir "/path/to/audited-v201-code-only" \
+  --expected-version v00.144 --gpio-chip /dev/gpiochip0 --irq-line 17
+```
+
+`--expected-version` は更新前の版です。GPIOチップは実機で確認した値を指定します。
+ForceBootが拒否された場合は停止します。消去への切替は実装していません。
+RAM updaterの全フレーム転送と実行ACKを確認し、通常FWがまだ版照会へ応答する場合はSDK等を書きません。
+SDK／APP／LIBの書込み応答をすべて確認した後、更新先版の独立した照会が成功した場合だけ更新完了とします。
+
+起動直後のForceBootを試す場合は `--wait-for-reset 120` を指定し、
+`waiting_for_physical_reset` が記録されてから、Piを起動したままGNSSだけを物理リセットします。
+ツールはリセットGPIOを操作しません。待機中は通常FWの完全な拒否応答（`ea`／-22、-2）と、
+コマンド書込み時のNACK／EIO、起動通知 `01`／`02` だけを扱い、ForceBoot要求のみ繰り返します。
+IRQタイムアウト・読出しエラー・短い書込み・不正パケットでは停止し、イメージを再送しません。
+正常な移行応答の後も、RAM転送・実行と通常FWが応答しないことの確認を経てからコードを書きます。
+
+別の明示的な移行方法として `--reboot-before-force` は非消去の `0x00 / 01` を送り、
+その応答後にForceBootを要求します。物理リセット待機とは併用できません。
+2026-10-19のSpresense v00.144では通常時・この再起動後ともForceBootが `ea`（-22）で拒否され、
+RAM転送やSDK／APP／LIB書込みに至りませんでした。この段階ではv201への更新は未確認です。
+同個体で物理RESETも試しましたが、400kHzでは起動通知 `01` の後も拒否が続きました。
+一時的な100kHzでの試行はRESETと受信が重なって不正ヘッダーを検出し、書込み前に停止しました。
+したがって、CFG領域へ書かないこの経路では、このSpresense個体の更新モードへの移行が未解決です。
+これらの試行ではイメージ転送・CFG書込み・消去は0回で、I2C速度は400kHzへ戻しました。
+後述の「元のSony CFGを再投入するv201更新」は、消去を許可して同一CFGを戻す別の経路です。
+
+送信ログはCFG書込み命令・消去命令を送っていないことを監査できます。
+既存CFG全体の読戻し機能はなく、全バイトの不変性や新SDKとの互換性まで保証するものではありません。
+更新前後の `--query` と通常測位・RTCMの確認を併用してください。TCXO値など動的な値は固定設定と区別します。
+
+## 元のSony CFGを再投入するv201更新
+
+`i2c_firmware_update.py --profile v201` はSpresense専用の実験用プロファイルです。
+別途取得したv201のRAM updater・SDK・APP・LIBと、公式Sony v144パッケージの `spresense_i2c.cfg`
+（3,008バイト、SHA-256 `f903fe844e52d9d014eb86a4d72150d6b53ca9cae8857f6789562838b7eb7b0c`）を組み合わせます。
+前回のSpresense v144更新で使った同一CFGを再投入する構成で、別基板用CFGは使用しません。
+CFGファイルの内容を維持しますが、手順は **eMRAM消去・コード書込み・Sony CFG再書込み** を伴います。
+実機内のCFG全バイトを読戻した構成ではなく、このv201との組合せの動作は実機確認が必要です。
+CFG領域へ書かない `i2c_firmware_update_preserve.py` とは別の操作です。
+
+入力の検査と送信計画だけを作る場合：
+
+```sh
+python3 examples/i2c_firmware_update.py \
+  --profile v201 --enter-mode erase \
+  --package "/path/to/gnss_addon_fw_updater_v144.zip" \
+  --code-dir "/path/to/audited-v201-code-only"
+```
+
+計250転送フレームと、SDK・APP・LIB・CFGの書込み引数
+`000000`・`010000`・`020000`・`030100` を確認してください。
+デバイスは開きません。Sonyパッケージ全体とv201コード4ファイルを固定ハッシュで検証し、
+v201コード用ディレクトリへのCFG混入や、別CFGへの差替えは拒否します。
+
+消去と元のSony CFGの再投入を選んで実行する場合のみ、上のコマンドに
+`--write --expected-version v00.144 --gpio-chip /dev/gpiochip0 --irq-line 17` を追加します。
+GPIOは実機で確認した値を使います。v201書込みには明示的な `--enter-mode erase` が必要です。
+消去は入力検査と現在版の照会の後に行い、各ACKと最後の `v00.201` の照会が揃った場合だけ成功とします。
+エラー後の自動再送・消去・リセット・ロールバックは行いません。
+
+消去要求の応答がタイムアウトした場合、消去されていないとは判断できません。
+電源を保ったまま応答と受信境界を確認してください。ブートローダーでは、ヘッダーと本文の間で
+IRQがHighのままになる場合があります。このプロファイルは更新モード中の本文だけ、
+Sony実装と同じ100msの待機後にHighを確認して、ヘッダーで宣言された長さを読みます。
+通常測位の受信にはこの処理を適用しません。
+
+消去要求でタイムアウトし、イメージ転送がまだ始まっていない場合に限り、
+上の書込みコマンドへ `--resume-after-erase /path/to/failed-update-log` を追加して再開できます。
+前回ログの版・入力ハッシュ・最後の消去要求を照合し、さらに実機が版照会へ
+`0xff / 06 fe`（未実装 -2）を返すことを確認してからRAM updaterを送ります。
+通常版が応答する場合や別エラーの場合は転送しません。再開時はSTOP・消去を送りません。
+これは途中のイメージを再送する機能ではなく、転送開始後のエラーには使用できません。
+
+2026-10-19にSpresense GNSS Add-on Boardの1個体で、v00.144からこの構成のv00.201への更新と、
+別プロセスでの版照会・通常測位の3D Fixを確認しました。
+3分間のRTCM収集で560有効フレーム、CRCエラー0を確認しました。
+通常測位60秒→RTCM180秒→通常測位へ再接続60秒を実施し、両方の通常測位で3D Fix、
+約1秒更新、読取り・終了エラー0を確認しました。RTCM停止・通常通知の復元と最終版照会も正常でした。
+消去要求のACK待ちで一度停止した後、残っていた応答を確認し、上記のブートローダー判定で
+再消去せずに再開しました。250フレームとSDK／APP／LIB／元のSony CFGの全書込みACKを確認しています。
+この実機確認は、このv201ファームウェアのSony公式配布・公式対応を意味しません。

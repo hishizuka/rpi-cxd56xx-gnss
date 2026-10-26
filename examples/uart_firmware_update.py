@@ -17,22 +17,17 @@ import struct
 import sys
 import time
 
-from i2c_firmware_update import (
-    IMAGES, TARGET_VERSION, decode_header, injection_frames, load_package,
-    packet_parts, read_version, verify_image,
+from _firmware_common import (
+    ReceiverCommandError, decode_header, injection_frames, is_injection_frame,
+    packet_parts, validate_code_images, wire_command_event,
 )
+from i2c_firmware_update import IMAGES, TARGET_VERSION, load_package, read_version
 from i2c_window_test import create_log_dir
 
 
 def validate_images(images):
     # Do not merely filter an arbitrary caller's list: require the exact set.
-    if len(images) != 4:
-        raise ValueError("Exactly updater, SDK, APP and LIB are required")
-    for (name, data, kind), spec in zip(images, IMAGES[:4]):
-        expected_name, size, digest, expected_kind = spec
-        if name != expected_name or kind != expected_kind:
-            raise ValueError("Configuration or unexpected image is forbidden")
-        verify_image(name, data, size, digest)
+    validate_code_images(images, IMAGES[:4])
 
 
 def allowed_command(opcode, payload):
@@ -41,17 +36,9 @@ def allowed_command(opcode, payload):
         return True
     if opcode == 0x09:
         return payload in (b"\x00\x00\x00", b"\x01\x00\x00", b"\x02\x00\x00")
-    if opcode == 0x01 and 5 <= len(payload) <= 4090:
-        total, index = struct.unpack_from("<HH", payload)
-        return 1 <= index <= total <= 65535
+    if opcode == 0x01:
+        return is_injection_frame(payload)
     return False
-
-
-class ReceiverCommandError(ValueError):
-    def __init__(self, opcode, code):
-        self.opcode = opcode
-        self.code = code
-        super().__init__(f"Receiver rejected opcode 0x{opcode:02x}: error {code}")
 
 
 class UARTTransport:
@@ -166,10 +153,7 @@ class UARTTransport:
         if not allowed_command(opcode, payload):
             raise ValueError("Erase, configuration, or unexpected command is forbidden")
         packet = b"".join(packet_parts(opcode, payload))
-        self.emit({"event": "wire_command_sent", "opcode": opcode,
-                   "operand_hex": payload.hex() if opcode != 1 else None,
-                   "packet_bytes": len(packet),
-                   "packet_sha256": hashlib.sha256(packet).hexdigest()})
+        self.emit(wire_command_event(opcode, payload, packet))
         written = self.serial.write(packet)
         self.serial.flush()
         if written != len(packet):

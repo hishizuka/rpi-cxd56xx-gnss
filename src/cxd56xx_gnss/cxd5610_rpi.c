@@ -47,7 +47,7 @@
  *   5) Public API (create/read/close)
  */
 
-typedef struct cxd5610_ctx {
+struct cxd5610_ctx {
   int i2c_fd;
   struct gpiod_chip *chip;
   struct gpiod_line_request *irq_req;
@@ -55,9 +55,23 @@ typedef struct cxd5610_ctx {
   uint8_t sndbuf[64];
   uint8_t rcvbuf[64];
   uint8_t notifybuf[NOTIFY_MAX_BUF];
-  bool boot_seen;
-  bool sleeping;
   struct cxd5610_data last;
+  struct cxd5610_dcreport dcreports[CXD5610_DCREPORT_QUEUE_SIZE];
+  size_t dcreport_head;
+  size_t dcreport_count;
+  uint64_t dcreports_dropped;
+  bool qzss_dcr_enabled;
+  bool dcr_applied_known;
+  enum cxd5610_session_state session_state;
+  int session_errno;
+  int change_errno;
+  int restore_errno;
+  enum cxd5610_error_stage error_stage;
+  bool dcr_request_pending;
+  bool dcr_request_done;
+  bool dcr_request_enabled;
+  int dcr_request_result;
+  bool worker_alive;
   int err_streak;
   pthread_t thread;
   pthread_mutex_t lock;
@@ -65,6 +79,7 @@ typedef struct cxd5610_ctx {
   bool lock_initialized;
   bool cond_initialized;
   bool running;
+  bool closing;
   bool thread_started;
   bool irq_wait_started;
   bool irq_part_ready;
@@ -79,15 +94,9 @@ typedef struct cxd5610_ctx {
   bool data_valid;
   int last_opc;
   uint64_t sample_seq;
-} cxd5610_ctx;
+};
 
 static int64_t monotonic_ms(void);
-
-/* Forward declaration for reuse inside the worker loop */
-static void handle_notify(struct cxd5610_ctx *ctx,
-                          uint8_t opc,
-                          const uint8_t *payload,
-                          uint16_t len);
 
 static int cond_wait_ms(pthread_cond_t *cond,
                         pthread_mutex_t *lock,
@@ -105,7 +114,12 @@ static int cond_wait_ms(pthread_cond_t *cond,
     }
 
   struct timespec ts;
-  clock_gettime(CLOCK_REALTIME, &ts);
+#ifdef __APPLE__
+  ts.tv_sec = 0;
+  ts.tv_nsec = 0;
+#else
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+#endif
   ts.tv_sec += timeout_ms / 1000;
   ts.tv_nsec += (timeout_ms % 1000) * 1000000L;
   if (ts.tv_nsec >= 1000000000L)
@@ -114,16 +128,33 @@ static int cond_wait_ms(pthread_cond_t *cond,
       ts.tv_nsec -= 1000000000L;
     }
 
+#ifdef __APPLE__
+  int wret = pthread_cond_timedwait_relative_np(cond, lock, &ts);
+#else
   int wret = pthread_cond_timedwait(cond, lock, &ts);
-  if (wret == 0)
-    {
-      return 0;
-    }
-  if (wret == ETIMEDOUT)
-    {
-      return -ETIMEDOUT;
-    }
+#endif
   return -wret;
+}
+
+static int init_sync(struct cxd5610_ctx *ctx)
+{
+  int ret = pthread_mutex_init(&ctx->lock, NULL);
+  if (ret != 0)
+    return -ret;
+  ctx->lock_initialized = true;
+  pthread_condattr_t attr;
+  ret = pthread_condattr_init(&attr);
+  if (ret != 0)
+    return -ret;
+#ifndef __APPLE__
+  ret = pthread_condattr_setclock(&attr, CLOCK_MONOTONIC);
+#endif
+  if (ret == 0)
+    ret = pthread_cond_init(&ctx->cond, &attr);
+  pthread_condattr_destroy(&attr);
+  if (ret == 0)
+    ctx->cond_initialized = true;
+  return -ret;
 }
 
 static void cxd5610_join_and_destroy_sync(struct cxd5610_ctx *ctx)
@@ -138,6 +169,7 @@ static void cxd5610_join_and_destroy_sync(struct cxd5610_ctx *ctx)
       pthread_mutex_lock(&ctx->lock);
       if (ctx->thread_started)
         {
+          ctx->closing = true;
           ctx->running = false;
           pthread_cond_broadcast(&ctx->cond);
           pthread_mutex_unlock(&ctx->lock);
@@ -160,10 +192,6 @@ static void cxd5610_join_and_destroy_sync(struct cxd5610_ctx *ctx)
     }
 }
 
-static int cond_wait_ms(pthread_cond_t *cond,
-                        pthread_mutex_t *lock,
-                        int timeout_ms);
-static void cxd5610_join_and_destroy_sync(struct cxd5610_ctx *ctx);
 /* -------------------------------------------------------------------------- */
 /* 1. Wire-format helpers                                                     */
 /* -------------------------------------------------------------------------- */
@@ -229,7 +257,7 @@ struct __attribute__((packed)) cmd_notify_acc {
 
 struct __attribute__((packed)) mt43_data {
   uint8_t svid;
-  uint8_t data[32];
+  uint8_t data[CXD5610_DCREPORT_BYTES];
 };
 
 struct __attribute__((packed)) cmd_notify_dcreport {
@@ -260,6 +288,42 @@ static void reset_data(struct cxd5610_data *d)
   d->total_sats = -1;
   d->timestamp.tv_sec = 0;
   d->timestamp.tv_nsec = 0;
+}
+
+/* The caller holds lock when synchronization has been initialized. */
+static void reset_session_data(struct cxd5610_ctx *ctx)
+{
+  ctx->ready = false;
+  ctx->data_valid = false;
+  ctx->dcr_applied_known = false;
+  ctx->dcreport_head = ctx->dcreport_count = 0;
+  reset_data(&ctx->last);
+}
+
+/* The caller holds lock. A terminal failure is sticky until close/recreation. */
+static void fail_session_locked(struct cxd5610_ctx *ctx, int error,
+                                enum cxd5610_error_stage stage)
+{
+  if (ctx->session_state == CXD5610_FAILED)
+    return;
+  ctx->session_state = CXD5610_FAILED;
+  ctx->session_errno = error < 0 ? -error : EIO;
+  ctx->error_stage = stage;
+  ctx->running = false;
+  reset_session_data(ctx);
+  if (ctx->cond_initialized)
+    pthread_cond_broadcast(&ctx->cond);
+}
+
+static int fail_session(struct cxd5610_ctx *ctx, int error,
+                        enum cxd5610_error_stage stage)
+{
+  if (ctx->lock_initialized)
+    pthread_mutex_lock(&ctx->lock);
+  fail_session_locked(ctx, error, stage);
+  if (ctx->lock_initialized)
+    pthread_mutex_unlock(&ctx->lock);
+  return CXD5610_SESSION_ERROR;
 }
 
 static void handle_sigint(int sig)
@@ -492,11 +556,7 @@ static void handle_time_notify(struct cxd5610_ctx *ctx,
   tmv.tm_min = t->min;
   tmv.tm_sec = t->sec;
 
-#ifdef _GNU_SOURCE
   time_t epoch = timegm(&tmv);
-#else
-  time_t epoch = mktime(&tmv);
-#endif
 
   ctx->last.timestamp.tv_sec = epoch;
   ctx->last.timestamp.tv_nsec = (long)t->sec100 * 10L * 1000000L;
@@ -518,21 +578,10 @@ static void handle_pos_notify(struct cxd5610_ctx *ctx,
       return;
     }
 
-  double lat = (double)le32(&pos->lat32) / 10000000.0;
-  double lon = (double)le32(&pos->lon32) / 10000000.0;
-  double alt = (double)le32(&pos->alt32) / 100.0;        // [m]
-  double geo = 0.0;
-  if (GET_PACKET_VERSION(pos->ver8) > 0 && len >= sizeof(struct cmd_notify_pos))
-    {
-      geo = (double)(int16_t)le16(&pos->geo16) / 100.0;
-    }
-  int svtype = pos->mode >> 4;
-  int fix = pos->mode & 0x0f;
-
-  ctx->last.lat = lat;
-  ctx->last.lon = lon;
-  ctx->last.alt = alt;
-  ctx->last.status = fix;
+  ctx->last.lat = (double)le32(&pos->lat32) / 10000000.0;
+  ctx->last.lon = (double)le32(&pos->lon32) / 10000000.0;
+  ctx->last.alt = (double)le32(&pos->alt32) / 100.0;  /* [m] */
+  ctx->last.status = pos->mode & 0x0f;
 }
 
 static void handle_vel_notify(struct cxd5610_ctx *ctx,
@@ -550,15 +599,8 @@ static void handle_vel_notify(struct cxd5610_ctx *ctx,
       return;
     }
 
-  double course = (double)le16(&vel->course16) / 10.0;           // [deg]
-  double mag_course = (double)le16(&vel->mag_course16) / 10.0;   // [deg]
-  double v_h = (double)(int16_t)le16(&vel->vel16) / 10.0 * 1000 / 3600;     // [km/h] -> [m/s]
-  double v_up = (double)(int16_t)le16(&vel->up_vel16) / 10.0 * 1000 / 3600; // [km/h] -> [m/s]
-
-  (void)mag_course;
-  (void)v_up;
-  ctx->last.speed = v_h;
-  ctx->last.track = course;
+  ctx->last.speed = (double)(int16_t)le16(&vel->vel16) / 10.0 * 1000 / 3600; /* [km/h] -> [m/s] */
+  ctx->last.track = (double)le16(&vel->course16) / 10.0; /* [deg] */
 }
 
 static void handle_sat_notify(struct cxd5610_ctx *ctx,
@@ -591,21 +633,14 @@ static void handle_sat_notify(struct cxd5610_ctx *ctx,
       numsv = (len - sizeof(struct cmd_notify_sat)) / sizeof(*info);
     }
 
-  // Todo: duplicate check with same type + s->svid
+  /* TODO: deduplicate satellites by signal type and satellite ID. */
   uint16_t valid_sats = 0;
   for (uint16_t i = 0; i < numsv; i++)
     {
-      const struct cmd_notify_satinfo *s = &info[i];
-      uint16_t type = s->signal & 0x0f;
-      uint16_t az = le16(&s->azimuth);
-      bool tracking = (s->signal & 0x20) != 0;
-      bool positioning = (s->signal & 0x80) != 0;
-      bool velocity = (s->signal & 0x40) != 0;
-
-      if (tracking)
-      {
-        valid_sats++;
-      }
+      if (info[i].signal & 0x20) /* Tracking */
+        {
+          valid_sats++;
+        }
     }
   ctx->last.used_sats = (int)valid_sats;
   ctx->last.total_sats = (int)numsv;
@@ -627,24 +662,9 @@ static void handle_acc_notify(struct cxd5610_ctx *ctx,
       return;
     }
 
-  float hvar = (float)le16(&acc->h_uc16);                      // [m]
-  float vvar = (float)le16(&acc->v_uc16);                      // [m]
-  float hvar_speed = (float)le16(&acc->h_speed_uc16) / 10.0f;  // [km/h]
-  float vvar_speed = (float)le16(&acc->v_speed_uc16) / 10.0f;  // [km/h]
   float pdop = (float)acc->pdop8 / 10.0f;
   float hdop = (float)acc->hdop8 / 10.0f;
   float vdop = (float)acc->vdop8 / 10.0f;
-  float semimajor = (float)le16(&acc->semimajor16);
-  float semiminor = (float)le16(&acc->semiminor16);
-  float orientation = (float)acc->orientation;
-
-  (void)hvar;
-  (void)vvar;
-  (void)hvar_speed;
-  (void)vvar_speed;
-  (void)semimajor;
-  (void)semiminor;
-  (void)orientation;
 
   /* Round DOP values to 3 decimal places before crossing the C/Python boundary */
   ctx->last.pdop = roundf(pdop * 1000.0f) / 1000.0f;
@@ -656,7 +676,8 @@ static void handle_dc_notify(struct cxd5610_ctx *ctx,
                              const uint8_t *p,
                              uint16_t len)
 {
-  if (len < sizeof(struct cmd_notify_dcreport))
+  const size_t header_size = offsetof(struct cmd_notify_dcreport, msg);
+  if (len < header_size)
     {
       return;
     }
@@ -667,14 +688,48 @@ static void handle_dc_notify(struct cxd5610_ctx *ctx,
       return;
     }
 
-  uint8_t count = dc->nr;
-  if (count > 3)
+  const uint8_t count = dc->nr;
+  if (count == 0 || count > 3 ||
+      len < header_size + count * sizeof(struct mt43_data))
     {
-      count = 3;
+      return;
     }
 
-  (void)count;
-  (void)ctx;
+  struct timespec received_at;
+  clock_gettime(CLOCK_REALTIME, &received_at);
+  /* Command exchanges can also dispatch notifications, outside the worker lock. */
+  if (ctx->lock_initialized)
+    pthread_mutex_lock(&ctx->lock);
+  /* Ignore disabled or in-flight reports, including command-time notifications. */
+  if (!ctx->qzss_dcr_enabled || !ctx->dcr_applied_known || !ctx->ready ||
+      ctx->session_state == CXD5610_FAILED ||
+      (ctx->dcr_request_pending && !ctx->dcr_request_done))
+    {
+      if (ctx->lock_initialized)
+        pthread_mutex_unlock(&ctx->lock);
+      return;
+    }
+  for (uint8_t i = 0; i < count; i++)
+    {
+      if (dc->msg[i].svid == 0)
+        continue;
+      if (ctx->dcreport_count == CXD5610_DCREPORT_QUEUE_SIZE)
+        {
+          ctx->dcreport_head = (ctx->dcreport_head + 1) % CXD5610_DCREPORT_QUEUE_SIZE;
+          ctx->dcreport_count--;
+          ctx->dcreports_dropped++;
+        }
+      size_t tail = (ctx->dcreport_head + ctx->dcreport_count) %
+                    CXD5610_DCREPORT_QUEUE_SIZE;
+      struct cxd5610_dcreport *report = &ctx->dcreports[tail];
+      /* Sony's CXD5610 NMEA implementation uses svid directly as the QZQSM ID. */
+      report->satellite_id = dc->msg[i].svid;
+      memcpy(report->data, dc->msg[i].data, sizeof(report->data));
+      report->received_at = received_at;
+      ctx->dcreport_count++;
+    }
+  if (ctx->lock_initialized)
+    pthread_mutex_unlock(&ctx->lock);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -686,6 +741,14 @@ static void handle_notify(struct cxd5610_ctx *ctx,
                           const uint8_t *payload,
                           uint16_t len)
 {
+  if (opc == OPC_DISASTER_CRISIS_NOTIFY)
+    {
+      handle_dc_notify(ctx, payload, len);
+      return;
+    }
+  /* Notifications can also arrive while the worker waits for a command ACK. */
+  if (ctx->lock_initialized)
+    pthread_mutex_lock(&ctx->lock);
   switch (opc)
     {
       case OPC_TIME_NOTIFY:
@@ -703,13 +766,11 @@ static void handle_notify(struct cxd5610_ctx *ctx,
       case OPC_ACCURACY_IDX_NOTIFY:
         handle_acc_notify(ctx, payload, len);
         break;
-      case OPC_DISASTER_CRISIS_NOTIFY:
-        handle_dc_notify(ctx, payload, len);
-        break;
       default:
-        (void)len;
         break;
     }
+  if (ctx->lock_initialized)
+    pthread_mutex_unlock(&ctx->lock);
 }
 
 /* Command helpers */
@@ -793,14 +854,7 @@ static int send_command(struct cxd5610_ctx *ctx,
         return rlen > 0 ? (int8_t)payload[0] : -EBADMSG;
       if (ropc == 0xff)
         return -EPROTO;
-      if (ropc == OPC_SYS_STATE_CHANGE_INSTRUCTION && rlen > 0)
-        {
-          if (payload[0] == STATE_RESET)
-            ctx->boot_seen = true;
-          else if (payload[0] == STATE_WAKEUP)
-            ctx->sleeping = false;
-        }
-      else if (ropc >= OPC_TIME_NOTIFY)
+      if (ropc >= OPC_TIME_NOTIFY)
         handle_notify(ctx, ropc, payload, rlen);
     }
 }
@@ -919,91 +973,134 @@ static int reopen_i2c(struct cxd5610_ctx *ctx)
   return init_i2c(ctx);
 }
 
-static int configure_session(struct cxd5610_ctx *ctx)
+static int configure_dcreport(struct cxd5610_ctx *ctx, bool enabled)
 {
-  int ret;
-
-  reset_data(&ctx->last);
-
-  /* Stop GNSS first (no payload) */
-  ret = send_command(ctx, OPC_GNSS_STOP, NULL, 0, 3000);
-  if (ret == -ETIMEDOUT || ret == -EAGAIN)
-    {
-      ret = 0; /* quiet-start: ignore initial missing response */
-    }
+  /* Sony GNSS_USE_QZSS_L1S is bit 5; retain QZSS L1CA/L5 and other signals. */
+  uint8_t sat_setting[] = {enabled ? 0xef : 0xcf, 0x3f};
+  int ret = send_command(ctx, OPC_GNSS_SAT_SETTING, sat_setting,
+                         sizeof(sat_setting), CXD5610_COMMAND_TIMEOUT_MS);
   if (ret < 0)
     {
       return ret;
     }
 
-  /* Enable all supported signals; reserved bit 4 must remain clear. */
-  uint8_t sat_setting[] = {0xef, 0x3f};
-  ret = send_command(ctx, OPC_GNSS_SAT_SETTING, sat_setting,
-                     sizeof(sat_setting), 3000);
-  if (ret == -ETIMEDOUT || ret == -EAGAIN)
-    {
-      ret = 0;
-    }
-  if (ret < 0)
-    {
-      return ret;
-    }
+  if (ret != 0)
+    return -EPROTO;
 
-  /* Request binary notify set */
   uint8_t notify_list[] = {
     OPC_TIME_NOTIFY,
     OPC_RECEIVER_POS_NOTIFY,
     OPC_RECEIVER_VEL_NOTIFY,
     OPC_SAT_INFO_NOTIFY,
-    OPC_ACCURACY_IDX_NOTIFY
-    //OPC_DISASTER_CRISIS_NOTIFY
+    OPC_ACCURACY_IDX_NOTIFY,
+    OPC_DISASTER_CRISIS_NOTIFY
   };
-  ret = send_command(ctx, OPC_BINARY_OUTPUT_SET, notify_list, sizeof(notify_list), 3000);
+  ret = send_command(ctx, OPC_BINARY_OUTPUT_SET, notify_list,
+                     sizeof(notify_list) - (enabled ? 0 : 1), CXD5610_COMMAND_TIMEOUT_MS);
+  return ret > 0 ? -EPROTO : ret;
+}
+
+static int configure_session(struct cxd5610_ctx *ctx)
+{
+  if (ctx->lock_initialized)
+    pthread_mutex_lock(&ctx->lock);
+  reset_session_data(ctx);
+  bool enabled = ctx->qzss_dcr_enabled;
+  enum cxd5610_error_stage stage = ctx->session_state == CXD5610_RECOVERING ?
+                                  CXD5610_STAGE_RECOVERY : CXD5610_STAGE_STARTUP;
+  if (ctx->lock_initialized)
+    pthread_mutex_unlock(&ctx->lock);
+
+  /* Stop GNSS first (no payload). */
+  int ret = send_command(ctx, OPC_GNSS_STOP, NULL, 0, CXD5610_COMMAND_TIMEOUT_MS);
   if (ret == -ETIMEDOUT || ret == -EAGAIN)
-    {
-      ret = 0;
-    }
+    ret = 0; /* Preserve quiet-start behavior for initial configuration. */
+  if (ret != 0)
+    return fail_session(ctx, ret > 0 ? -EPROTO : ret, stage);
+  ret = configure_dcreport(ctx, enabled);
   if (ret < 0)
-    {
-      return ret;
-    }
+    return fail_session(ctx, ret, stage);
 
   /* Start GNSS */
   uint8_t start_param = 3;
-  ret = send_command(ctx, OPC_GNSS_START, &start_param, sizeof(start_param), 3000);
-  if (ret == -ETIMEDOUT || ret == -EAGAIN)
-    {
-      ret = 0;
-    }
-  return ret;
+  ret = send_command(ctx, OPC_GNSS_START, &start_param, sizeof(start_param),
+                     CXD5610_COMMAND_TIMEOUT_MS);
+  if (ret != 0)
+    return fail_session(ctx, ret > 0 ? -EPROTO : ret, stage);
+  if (ctx->lock_initialized)
+    pthread_mutex_lock(&ctx->lock);
+  ctx->session_state = CXD5610_READY;
+  ctx->ready = true;
+  ctx->dcr_applied_known = true;
+  if (ctx->cond_initialized)
+    pthread_cond_broadcast(&ctx->cond);
+  if (ctx->lock_initialized)
+    pthread_mutex_unlock(&ctx->lock);
+  return 0;
 }
 
-static void recover_session(struct cxd5610_ctx *ctx)
+static int apply_dcreport_request(struct cxd5610_ctx *ctx)
 {
-  /* Reopen I2C and re-issue minimal init sequence */
-  if (reopen_i2c(ctx) < 0)
+  pthread_mutex_lock(&ctx->lock);
+  if (!ctx->dcr_request_pending || ctx->dcr_request_done)
     {
-      fprintf(stderr, "[RECOVER] reopen i2c failed: %s\n", strerror(errno));
-      return;
-    }
-
-  int ret;
-
-  ret = configure_session(ctx);
-  fprintf(stderr, "[RECOVER] restart result=%d\n", ret);
-
-  if (ctx->lock_initialized)
-    {
-      pthread_mutex_lock(&ctx->lock);
-      ctx->ready = (ret == 0);
-      if (ret < 0)
-        {
-          ctx->data_valid = false;
-        }
       pthread_mutex_unlock(&ctx->lock);
+      return 0;
     }
+  bool enabled = ctx->dcr_request_enabled;
+  bool previous = ctx->qzss_dcr_enabled;
+  ctx->session_state = CXD5610_CONFIGURING;
+  ctx->dcr_applied_known = false;
+  pthread_mutex_unlock(&ctx->lock);
 
+  /* Only this worker owns the I2C exchange. Positioning stays running. */
+  int ret = configure_dcreport(ctx, enabled);
+  int rollback = ret < 0 ? configure_dcreport(ctx, previous) : 0;
+
+  pthread_mutex_lock(&ctx->lock);
+  if (ret == 0)
+    {
+      ctx->qzss_dcr_enabled = enabled;
+      /* A new enable period must not replay messages from the previous period. */
+      ctx->dcreport_head = ctx->dcreport_count = 0;
+    }
+  ctx->dcr_request_result = ret;
+  ctx->dcr_request_done = true;
+  ctx->change_errno = ret < 0 ? -ret : 0;
+  ctx->restore_errno = rollback < 0 ? -rollback : 0;
+  if (rollback < 0)
+    {
+      fail_session_locked(ctx, rollback, CXD5610_STAGE_RESTORE);
+    }
+  else
+    {
+      ctx->session_state = CXD5610_READY;
+      ctx->dcr_applied_known = true;
+    }
+  pthread_cond_broadcast(&ctx->cond);
+  pthread_mutex_unlock(&ctx->lock);
+  return rollback;
+}
+
+static int recover_session(struct cxd5610_ctx *ctx)
+{
+  pthread_mutex_lock(&ctx->lock);
+  if (ctx->session_state == CXD5610_FAILED)
+    {
+      pthread_mutex_unlock(&ctx->lock);
+      return CXD5610_SESSION_ERROR;
+    }
+  ctx->session_state = CXD5610_RECOVERING;
+  ctx->ready = ctx->data_valid = ctx->dcr_applied_known = false;
+  ctx->dcreport_head = ctx->dcreport_count = 0;
+  pthread_cond_broadcast(&ctx->cond);
+  pthread_mutex_unlock(&ctx->lock);
+  int ret = reopen_i2c(ctx);
+  if (ret < 0)
+    return fail_session(ctx, ret, CXD5610_STAGE_RECOVERY);
+  ret = configure_session(ctx);
   ctx->err_streak = 0;
+  return ret;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1029,25 +1126,24 @@ static bool cxd5610_should_continue(struct cxd5610_ctx *ctx)
 static void *cxd5610_worker(void *arg)
 {
   struct cxd5610_ctx *ctx = (struct cxd5610_ctx *)arg;
-  int ret;
-
-  ret = configure_session(ctx);
+  int ret = configure_session(ctx);
 
   pthread_mutex_lock(&ctx->lock);
-  ctx->ready = (ret == 0);
   ctx->data_valid = false;
   ctx->last_opc = ret;
   pthread_mutex_unlock(&ctx->lock);
 
   if (ret < 0)
     {
-      return NULL;
+      goto done;
     }
 
   bool first_loop = true;
 
   while (cxd5610_should_continue(ctx))
     {
+      if (apply_dcreport_request(ctx) < 0)
+        break;
       uint8_t opc;
       uint8_t *payload;
       uint16_t len;
@@ -1065,10 +1161,7 @@ static void *cxd5610_worker(void *arg)
             continue;
           if (ctx->transport_error)
             {
-              pthread_mutex_lock(&ctx->lock);
-              ctx->data_valid = false;
-              ctx->last_opc = ret;
-              pthread_mutex_unlock(&ctx->lock);
+              fail_session(ctx, ret, CXD5610_STAGE_TRANSPORT);
               fprintf(stderr, "[CXD5610] transport failed: %s\n", strerror(-ret));
               break;
             }
@@ -1083,29 +1176,35 @@ static void *cxd5610_worker(void *arg)
 
               fprintf(stderr, "[CXD5610] read warning (%s). Reopening I2C...\n",
                       strerror(-ret));
-              if (reopen_i2c(ctx) < 0)
+              int reopened = reopen_i2c(ctx);
+              if (reopened < 0)
                 {
-                  fprintf(stderr, "[CXD5610] reopen failed: %s\n", strerror(errno));
+                  fail_session(ctx, reopened, CXD5610_STAGE_RECOVERY);
+                  break;
                 }
-              if (++ctx->err_streak >= 5)
-                {
-                  fprintf(stderr, "[CXD5610] consecutive errors, reinitializing session...\n");
-                  recover_session(ctx);
-                }
-              continue;
             }
-
-          fprintf(stderr, "[CXD5610] read error: %s\n", strerror(-ret));
+          else
+            {
+              fprintf(stderr, "[CXD5610] read error: %s\n", strerror(-ret));
+            }
           if (++ctx->err_streak >= 5)
             {
               fprintf(stderr, "[CXD5610] consecutive errors, reinitializing session...\n");
-              recover_session(ctx);
+              if (recover_session(ctx) < 0)
+                break;
             }
           continue;
         }
 
       first_loop = false;
       ctx->err_streak = 0;
+
+      /* DC reports have their own queue and must not publish a position sample. */
+      if (opc == OPC_DISASTER_CRISIS_NOTIFY)
+        {
+          handle_dc_notify(ctx, payload, len);
+          continue;
+        }
 
       pthread_mutex_lock(&ctx->lock);
       ctx->last_opc = (int)opc;
@@ -1116,13 +1215,25 @@ static void *cxd5610_worker(void *arg)
           continue;
         }
 
+      pthread_mutex_unlock(&ctx->lock);
       handle_notify(ctx, opc, payload, len);
+      pthread_mutex_lock(&ctx->lock);
       ctx->data_valid = true;
       ctx->sample_seq++;
       pthread_cond_signal(&ctx->cond);
       pthread_mutex_unlock(&ctx->lock);
     }
 
+done:
+  pthread_mutex_lock(&ctx->lock);
+  if (!ctx->closing && ctx->session_state != CXD5610_FAILED)
+    fail_session_locked(ctx, -EIO, CXD5610_STAGE_WORKER);
+  if (ctx->closing && ctx->session_state != CXD5610_FAILED)
+    ctx->session_state = CXD5610_STOPPED;
+  ctx->worker_alive = false;
+  ctx->running = false;
+  pthread_cond_broadcast(&ctx->cond);
+  pthread_mutex_unlock(&ctx->lock);
   return NULL;
 }
 
@@ -1131,6 +1242,11 @@ static void *cxd5610_worker(void *arg)
 /* -------------------------------------------------------------------------- */
 
 int cxd5610_create(struct cxd5610_ctx **out_ctx)
+{
+  return cxd5610_create_with_dcr(out_ctx, true);
+}
+
+int cxd5610_create_with_dcr(struct cxd5610_ctx **out_ctx, bool enabled)
 {
   if (!out_ctx)
     {
@@ -1144,70 +1260,132 @@ int cxd5610_create(struct cxd5610_ctx **out_ctx)
     }
 
   ctx->i2c_fd = -1;
+  ctx->qzss_dcr_enabled = enabled;
   reset_data(&ctx->last);
-  ctx->lock_initialized = false;
-  ctx->cond_initialized = false;
-  ctx->running = false;
-  ctx->thread_started = false;
-  ctx->ready = false;
-  ctx->data_valid = false;
   ctx->last_opc = -1;
-  ctx->sample_seq = 0;
-  ctx->err_streak = 0;
 
   int ret = init_i2c(ctx);
   if (ret < 0)
-    {
-      cxd5610_close(ctx);
-      *out_ctx = NULL;
-      return ret;
-    }
+    goto fail;
 
   ret = init_gpio(ctx);
   if (ret < 0)
-    {
-      cxd5610_close(ctx);
-      *out_ctx = NULL;
-      return ret;
-    }
+    goto fail;
 
-  if (pthread_mutex_init(&ctx->lock, NULL) == 0)
-    {
-      ctx->lock_initialized = true;
-    }
-  else
-    {
-      cxd5610_close(ctx);
-      *out_ctx = NULL;
-      return -ENOMEM;
-    }
-
-  if (pthread_cond_init(&ctx->cond, NULL) == 0)
-    {
-      ctx->cond_initialized = true;
-    }
-  else
-    {
-      pthread_mutex_destroy(&ctx->lock);
-      ctx->lock_initialized = false;
-      cxd5610_close(ctx);
-      *out_ctx = NULL;
-      return -ENOMEM;
-    }
+  ret = init_sync(ctx);
+  if (ret < 0)
+    goto fail;
 
   ctx->running = true;
-  ret = pthread_create(&ctx->thread, NULL, cxd5610_worker, ctx);
+  ctx->worker_alive = true;
+  ret = -pthread_create(&ctx->thread, NULL, cxd5610_worker, ctx);
   if (ret != 0)
     {
       ctx->running = false;
-      cxd5610_close(ctx);
-      *out_ctx = NULL;
-      return -ret;
+      goto fail;
     }
 
   ctx->thread_started = true;
   *out_ctx = ctx;
   return 0;
+
+fail:
+  cxd5610_close(ctx);
+  *out_ctx = NULL;
+  return ret;
+}
+
+int cxd5610_set_qzss_dcr_enabled(struct cxd5610_ctx *ctx, bool enabled)
+{
+  if (!ctx)
+    return -EINVAL;
+  if (!ctx->lock_initialized || !ctx->cond_initialized)
+    return -ENOTSUP;
+  pthread_mutex_lock(&ctx->lock);
+  if (ctx->session_state == CXD5610_FAILED)
+    {
+      pthread_mutex_unlock(&ctx->lock);
+      return CXD5610_SESSION_ERROR;
+    }
+  if (!ctx->running || !ctx->worker_alive)
+    {
+      int ret = ctx->last_opc < 0 ? ctx->last_opc : -EIO;
+      pthread_mutex_unlock(&ctx->lock);
+      return ret;
+    }
+  if (ctx->dcr_request_pending)
+    {
+      pthread_mutex_unlock(&ctx->lock);
+      return -EBUSY;
+    }
+  ctx->dcr_request_pending = true;
+  ctx->dcr_request_done = false;
+  ctx->dcr_request_enabled = enabled;
+  pthread_cond_broadcast(&ctx->cond);
+  while (!ctx->dcr_request_done && ctx->running && ctx->worker_alive)
+    pthread_cond_wait(&ctx->cond, &ctx->lock);
+  int ret = ctx->session_state == CXD5610_FAILED ? CXD5610_SESSION_ERROR :
+            ctx->dcr_request_done ? ctx->dcr_request_result :
+            (ctx->last_opc < 0 ? ctx->last_opc : -ECANCELED);
+  ctx->dcr_request_pending = false;
+  pthread_mutex_unlock(&ctx->lock);
+  return ret;
+}
+
+int cxd5610_get_session_status(struct cxd5610_ctx *ctx,
+                                struct cxd5610_session_status *out)
+{
+  if (!ctx || !out)
+    return -EINVAL;
+  if (!ctx->lock_initialized)
+    return -ENOTSUP;
+  pthread_mutex_lock(&ctx->lock);
+  out->state = ctx->session_state;
+  out->qzss_dcr_requested = ctx->dcr_request_pending && !ctx->dcr_request_done ?
+                           ctx->dcr_request_enabled : ctx->qzss_dcr_enabled;
+  out->qzss_dcr_applied = ctx->dcr_applied_known ? ctx->qzss_dcr_enabled : -1;
+  out->error_errno = ctx->session_errno;
+  out->change_errno = ctx->change_errno;
+  out->restore_errno = ctx->restore_errno;
+  out->error_stage = ctx->error_stage;
+  pthread_mutex_unlock(&ctx->lock);
+  return 0;
+}
+
+int cxd5610_wait_ready(struct cxd5610_ctx *ctx, int timeout_ms)
+{
+  if (!ctx || timeout_ms < 0)
+    return -EINVAL;
+  if (!ctx->lock_initialized || !ctx->cond_initialized)
+    return -ENOTSUP;
+  int64_t deadline = monotonic_ms() + timeout_ms;
+  pthread_mutex_lock(&ctx->lock);
+  int ret = 0;
+  while (ctx->session_state != CXD5610_READY)
+    {
+      if (ctx->session_state == CXD5610_FAILED)
+        {
+          ret = CXD5610_SESSION_ERROR;
+          break;
+        }
+      if (!ctx->running || !ctx->worker_alive)
+        {
+          ret = -ECANCELED;
+          break;
+        }
+      int remaining = (int)(deadline - monotonic_ms());
+      if (remaining <= 0)
+        {
+          ret = -ETIMEDOUT;
+          break;
+        }
+      ret = cond_wait_ms(&ctx->cond, &ctx->lock, remaining);
+      if (ret < 0 && ret != -ETIMEDOUT)
+        break;
+      ret = 0;
+    }
+  pthread_mutex_unlock(&ctx->lock);
+  return ret;
 }
 
 int cxd5610_read(struct cxd5610_ctx *ctx, struct cxd5610_data *out, int timeout_ms)
@@ -1222,6 +1400,7 @@ int cxd5610_read(struct cxd5610_ctx *ctx, struct cxd5610_data *out, int timeout_
       int ret = 0;
       pthread_mutex_lock(&ctx->lock);
       uint64_t start_seq = ctx->sample_seq;
+      int64_t deadline = timeout_ms < 0 ? 0 : monotonic_ms() + timeout_ms;
 
       while (ctx->running && (!ctx->data_valid || ctx->sample_seq == start_seq))
         {
@@ -1231,37 +1410,19 @@ int cxd5610_read(struct cxd5610_ctx *ctx, struct cxd5610_data *out, int timeout_
               break;
             }
 
-          if (timeout_ms < 0)
-            {
-              pthread_cond_wait(&ctx->cond, &ctx->lock);
-            }
-          else
-            {
-              struct timespec ts;
-              clock_gettime(CLOCK_REALTIME, &ts);
-              ts.tv_sec += timeout_ms / 1000;
-              ts.tv_nsec += (timeout_ms % 1000) * 1000000L;
-              if (ts.tv_nsec >= 1000000000L)
-                {
-                  ts.tv_sec += 1;
-                  ts.tv_nsec -= 1000000000L;
-                }
-
-              int wret = pthread_cond_timedwait(&ctx->cond, &ctx->lock, &ts);
-              if (wret == ETIMEDOUT)
-                {
-                  ret = -ETIMEDOUT;
-                  break;
-                }
-              else if (wret != 0)
-                {
-                  ret = -wret;
-                  break;
-                }
-            }
+          int remaining = timeout_ms < 0 ? -1 : (int)(deadline - monotonic_ms());
+          ret = remaining == 0 || (timeout_ms > 0 && remaining < 0) ?
+                -ETIMEDOUT : cond_wait_ms(&ctx->cond, &ctx->lock, remaining);
+          if (ret < 0)
+            break;
         }
 
-      if (ret == 0 && (!ctx->running || !ctx->data_valid))
+      if (ctx->session_state == CXD5610_FAILED)
+        {
+          reset_data(out);
+          ret = CXD5610_SESSION_ERROR;
+        }
+      else if (ret == 0 && (!ctx->running || !ctx->data_valid))
         {
           ret = -EIO;
         }
@@ -1311,7 +1472,12 @@ int cxd5610_peek(struct cxd5610_ctx *ctx, struct cxd5610_data *out)
     {
       int ret = 0;
       pthread_mutex_lock(&ctx->lock);
-      if (!ctx->data_valid)
+      if (ctx->session_state == CXD5610_FAILED)
+        {
+          reset_data(out);
+          ret = CXD5610_SESSION_ERROR;
+        }
+      else if (!ctx->data_valid)
         {
           ret = -EAGAIN;
         }
@@ -1324,6 +1490,34 @@ int cxd5610_peek(struct cxd5610_ctx *ctx, struct cxd5610_data *out)
     }
 
   return -ENOTSUP;
+}
+
+int cxd5610_read_dcreports(struct cxd5610_ctx *ctx,
+                          struct cxd5610_dcreport *out,
+                          size_t capacity, uint64_t *dropped)
+{
+  if (!ctx || (capacity > 0 && !out))
+    return -EINVAL;
+  if (!ctx->lock_initialized)
+    return -ENOTSUP;
+
+  pthread_mutex_lock(&ctx->lock);
+  if (capacity > 0 && ctx->session_state == CXD5610_FAILED)
+    {
+      pthread_mutex_unlock(&ctx->lock);
+      return CXD5610_SESSION_ERROR;
+    }
+  size_t count = capacity < ctx->dcreport_count ? capacity : ctx->dcreport_count;
+  for (size_t i = 0; i < count; i++)
+    {
+      out[i] = ctx->dcreports[ctx->dcreport_head];
+      ctx->dcreport_head = (ctx->dcreport_head + 1) % CXD5610_DCREPORT_QUEUE_SIZE;
+    }
+  ctx->dcreport_count -= count;
+  if (dropped)
+    *dropped = ctx->dcreports_dropped;
+  pthread_mutex_unlock(&ctx->lock);
+  return (int)count;
 }
 
 int cxd5610_shutdown(struct cxd5610_ctx *ctx)

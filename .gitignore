@@ -11,6 +11,10 @@ wheelhouse/
 
 # Keep investigation diaries and development notes local.
 /docs/diary/
+/docs/ja/pizero-bikecomputer-dcreport-*
+/docs/ja/dcreport-*-20??????.md
+/examples/local/
+/tests/local/
 
 # Keep credentials, firmware packages and receiver recordings local.
 .env

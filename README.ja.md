@@ -11,6 +11,9 @@ pip install rpi-cxd56xx-gnss
 Raspberry Pi で Sony CXD56xx GNSS を利用するための Linux I2C ドライバー、Python バインディング、コマンドラインツールです。
 `CXD56xx` クラスまたは `cxd56xx-gnss` コマンドで、位置・高度・速度・方位・衛星情報・UTC 時刻を取得できます。
 インストールされる Python API と CLI は **I2C のみ対応**です。
+Python APIでは[QZSS災危通報の生データ](docs/ja/api.md#qzss-災危通報i2c)も取得でき、
+別途インストールしたazarashiへ直接渡せます。L1Sと災危通報は起動時・稼働中にON/OFFできます。
+`wait_ready()` で設定適用を確認でき、再生成が必要な受信停止は `CXD56xxSessionError` で判別できます。
 
 **Linux、Python 3.13 以上、libgpiod 2.0 以上**が必要です。
 パッケージは利用環境でソースからビルドされます。Raspberry Pi OS Trixie 以降を推奨します。

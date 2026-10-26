@@ -46,7 +46,7 @@ jobs:
               raise SystemExit(f"Run this workflow from tag v{version}, not a branch.")
           PY
       - name: Install build tools
-        run: python -m pip install --upgrade build twine
+        run: python -m pip install --upgrade build twine 'Cython>=3.0' 'setuptools>=77'
       - name: Run hardware-free tests
         run: |
           python -m unittest discover -s tests -p 'test_*.py'

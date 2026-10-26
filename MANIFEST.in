@@ -1,8 +1,11 @@
 include LICENSE README.md README.ja.md THIRD_PARTY.md NOTICE Makefile
 recursive-include src *.py *.pyx *.c *.h
-recursive-include docs *.md *.json *.png
+recursive-include docs *.md *.png
+include docs/source-manifest.json
 recursive-include examples *.py *.c
-recursive-include tests *.py *.c
+recursive-include tests *.py *.c *.json
 include scripts/gnss-record
 prune docs/diary
+prune examples/local
+prune tests/local
 prune build

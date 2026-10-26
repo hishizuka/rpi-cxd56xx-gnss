@@ -38,9 +38,10 @@ class Receiver:
 
     def __getattr__(self, name):
         values = dict.fromkeys(probe.FIELDS)
+        # Coordinates are synthetic values, not a recorded receiver position.
         values.update(
             timestamp=1000 + (int(self.clock.now) if self.live else 0),
-            lat=35.0, lon=139.0, mode=3 if self.fix else 1,
+            lat=0.0, lon=0.0, mode=3 if self.fix else 1,
             status=1 if self.fix else 0, used_sats=6, total_sats=12,
         )
         return values[name]
@@ -119,14 +120,14 @@ class ObservationTests(unittest.TestCase):
         self.assertEqual(summary["errors"][0]["type"], "OSError")
 
     def test_out_of_range_coordinates_do_not_establish_fix(self):
-        self.assertFalse(probe.has_fix({"mode": 3, "status": 1, "lat": 91, "lon": 139}))
-        self.assertFalse(probe.has_fix({"mode": 3, "status": 1, "lat": None, "lon": 139}))
+        self.assertFalse(probe.has_fix({"mode": 3, "status": 1, "lat": 91, "lon": 0}))
+        self.assertFalse(probe.has_fix({"mode": 3, "status": 1, "lat": None, "lon": 0}))
 
     def test_2d_differential_fix_is_valid(self):
-        self.assertTrue(probe.has_fix({"mode": 2, "status": 2, "lat": 35, "lon": 139}))
+        self.assertTrue(probe.has_fix({"mode": 2, "status": 2, "lat": 0, "lon": 0}))
 
     def test_dead_reckoning_is_not_a_gnss_fix(self):
-        self.assertFalse(probe.has_fix({"mode": 3, "status": 3, "lat": 35, "lon": 139}))
+        self.assertFalse(probe.has_fix({"mode": 3, "status": 3, "lat": 0, "lon": 0}))
 
     def test_logs_inside_git_checkout_are_rejected(self):
         with tempfile.TemporaryDirectory() as directory:

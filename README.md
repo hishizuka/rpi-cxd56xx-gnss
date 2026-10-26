@@ -12,6 +12,11 @@ Sony CXD56xx GNSS receivers on Raspberry Pi: a Linux I2C driver, Python bindings
 and a command-line reader. Read position, altitude, speed, heading, satellite
 data and UTC time with the `CXD56xx` class or `cxd56xx-gnss` command.
 The installed Python API and CLI support **I2C only**.
+The Python API also exposes raw [QZSS DC reports](docs/api.md#qzss-disaster-and-crisis-reports-i2c)
+for direct decoding with optional azarashi. Enable or disable L1S/DC reports at
+startup or at runtime using the Python API.
+`wait_ready()` confirms receiver configuration; `CXD56xxSessionError` identifies
+a failed session that needs closing and recreating.
 
 Requires **Linux, Python 3.13+ and libgpiod 2.0+**. Packages are built from source
 on the target system; Raspberry Pi OS Trixie or later is recommended.
