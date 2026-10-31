@@ -21,7 +21,7 @@ from _firmware_common import (
     ReceiverCommandError, decode_header, injection_frames, is_injection_frame,
     packet_parts, validate_code_images, wire_command_event,
 )
-from i2c_firmware_update import IMAGES, TARGET_VERSION, load_package, read_version
+from i2c_firmware_update import IMAGES, TARGET_VERSION, load_package
 from i2c_window_test import create_log_dir
 
 

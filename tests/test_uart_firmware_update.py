@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "examples"))
 import uart_firmware_update as fw
+from i2c_firmware_update import read_version as read_binary_version
 
 
 class Receiver:
@@ -18,7 +19,7 @@ class Receiver:
         self.fail_slot = fail_slot
 
     def read_version(self):
-        return fw.read_version(self)
+        return read_binary_version(self)
 
     def stop(self):
         self.exchange(0x31, b"", 5)
@@ -114,7 +115,7 @@ class UARTFirmwareTests(unittest.TestCase):
             reads += 1
             if reads == 2:
                 raise TimeoutError("Updater has no ASCII version query")
-            return fw.read_version(receiver)
+            return read_binary_version(receiver)
 
         receiver.read_version = read_version
         with self.assertRaisesRegex(ValueError, "Expected v00.144"):

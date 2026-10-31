@@ -1,19 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
 """Test the public packet adapter without opening or importing native devices."""
 
-import importlib.util
 import json
 from pathlib import Path
 import sys
 import unittest
 
-spec = importlib.util.spec_from_file_location(
-    "cxd56xx_packet_types", Path(__file__).resolve().parents[1] / "src/cxd56xx_gnss/_types.py"
-)
-types = importlib.util.module_from_spec(spec)
-sys.modules[spec.name] = types
-spec.loader.exec_module(types)
-DCReport = types.DCReport
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+from cxd56xx_gnss import DCReport
 
 FIXTURES = json.loads((Path(__file__).parent / "data" / "dcreport-synthetic.json").read_text())
 INVALID = bytes.fromhex(FIXTURES["crc_vectors"]["invalid_data_hex"])

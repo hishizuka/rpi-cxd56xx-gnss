@@ -158,8 +158,7 @@ The receive path copies all 32 bytes without changing padding, converting to tex
 decoding content, or checking the L1S CRC. The I2C packet checksum is checked by
 the transport. The decoder should validate the L1S CRC and content.
 Both MT43 and MT44 payloads are passed through if the receiver outputs them.
-Real MT43/MT44 packets were received on the tested `v00.201` firmware, but
-azarashi 0.17.1 rejected the captured payloads with L1S CRC mismatches. The
+CXD5610 output may be rejected by azarashi due to an L1S CRC mismatch. The
 explicit adapter below enables parsing without verifying the received CRC.
 
 ### `DCReport.to_azarashi_packet(*, reconstruct_crc=False) -> bytes`

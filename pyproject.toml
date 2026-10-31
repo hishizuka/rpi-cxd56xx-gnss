@@ -5,10 +5,10 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "rpi-cxd56xx-gnss"
 version = "0.1.1"
-description = "Linux I2C driver and Python bindings for Sony CXD56xx GNSS receivers"
+description = "I2C and POSIX UART Python drivers for Sony CXD56xx GNSS receivers"
 readme = "README.md"
 authors = [{name = "hishizuka"}]
-keywords = ["gnss", "gps", "sony", "raspberry-pi", "i2c"]
+keywords = ["gnss", "gps", "sony", "raspberry-pi", "i2c", "uart", "rtcm"]
 requires-python = ">=3.13"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE", "THIRD_PARTY.md"]
@@ -28,6 +28,9 @@ Issues = "https://github.com/hishizuka/rpi-cxd56xx-gnss/issues"
 
 [project.scripts]
 cxd56xx-gnss = "cxd56xx_gnss.cli:main"
+
+[project.optional-dependencies]
+uart = ["pynmeagps>=1.1.4"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

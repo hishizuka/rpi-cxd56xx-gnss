@@ -10,10 +10,11 @@
 
 <a id="i2c-firmware-update"></a>
 
-## 動作確認の範囲
+## 対応範囲
 
-Spresense GNSS Add-on Boardでは、I2Cでv00.103からv00.144へ更新し、RTCM取得を確認しています。
-v00.103ではRTCM通知の有効化が拒否されました。更新手順は[ファームウェア更新ガイド](firmware-update.md)を参照してください。
+Spresense GNSS Add-on Boardのv00.144でRTCM取得に対応しています。
+v00.103はRTCM通知の有効化を拒否するため、この手順では収集できません。
+更新手順は[ファームウェア更新ガイド](firmware-update.md)を参照してください。
 RTCMの受信成功やRINEXへの位相フィールドの出力だけで、連続した有効な搬送波追尾やRTK・PPKの精度は判断できません。
 
 ## 1コマンドで収集する（screen）
@@ -93,7 +94,7 @@ RTCM通知の設定が拒否された場合は測位を開始せず終了しま�
 | --- | --- |
 | `events.jsonl` | コマンド要求、応答、終了時の復元結果 |
 | `notifications.bin` | チェックサム検証済み受信パケットを再構成した記録。位置情報を含み得る |
-| `rtcm-stream.bin` | `0x84` の通知ヘッダーを除いて受信順に連結したデータ。実測v144は3バイト、REYAX仕様は5バイト |
+| `rtcm-stream.bin` | `0x84` の通知ヘッダーを除いて受信順に連結したデータ。v144のヘッダーは3バイト、REYAX仕様は5バイト |
 | `observations.rtcm3` | CRC24Qの検証に通ったRTCMフレーム |
 | `fragment-metadata.json` | 通知形式、宣言サイズと実サイズ。REYAX形式では分割数・通番も記録 |
 | `summary.json` | コマンド応答、RTCM種類別の件数、CRCエラー、欠落／余剰バイトなど |

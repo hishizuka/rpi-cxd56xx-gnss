@@ -7,15 +7,15 @@ English | [日本語](ja/firmware-update.md)
 These are standalone tools in `examples/`. Run them from the repository root
 or an unpacked source distribution. They are not installed as pip commands.
 Keep the `examples/` directory together when copying these tools: all three
-updaters now also import `_firmware_common.py` from the same directory.
+updaters import `_firmware_common.py` from the same directory.
 The Raspberry Pi tools are this project's implementations; Sony's
 [official updater procedure](https://developer.spresense.sony-semicon.com/ja/downloads/gnss-addon-fw-updater/manual)
 uses a Spresense main board.
 
-| Tool | Target | Validation |
+| Tool | Target | Behavior and scope |
 | --- | --- | --- |
-| `i2c_firmware_update.py` | Spresense GNSS Add-on Board, CXD5610GF | [Recorded v144 update](ja/rtcm.md#i2c-firmware-update); also provides an experimental v201-code/original-Sony-CFG reflash profile |
-| `uart_firmware_update.py` | Experimental RYS8839/CXD5610GF path | One RYS8839_Lite was updated v00.129 → v00.144 without CFG or erase commands; UART positioning and RTCM were verified. Not for RYS8833/CXD5605 |
+| `i2c_firmware_update.py` | Spresense GNSS Add-on Board, CXD5610GF | Five-image v144 update and an experimental v201-code/original-Sony-CFG reflash profile |
+| `uart_firmware_update.py` | Experimental RYS8839/CXD5610GF path | v144 code images without CFG or erase commands; firmware compatibility is unverified. Not for RYS8833/CXD5605 |
 | `i2c_firmware_update_preserve.py` | I2C code-only update and inspection | Accepts audited Sony v144 or externally supplied v201 code images; blocks CFG, erase and settings writes at the transport boundary |
 
 All tools default to an offline plan. Only `--write` enables firmware writes.
@@ -96,15 +96,10 @@ execution and the normal-firmware version probe before code programming.
 
 Alternatively, `--reboot-before-force` explicitly sends the non-erasing
 `0x00 / 01` reboot and waits for its acknowledgement before ForceBoot. These
-entry strategies are mutually exclusive. On 2026-10-19, the tested Spresense
-v00.144 rejected ForceBoot with `ea` (-22), both directly and after this
-reboot. No RAM or SDK/APP/LIB transfer occurred; v201 remained unverified.
-Physical RESET on the same board at 400kHz produced startup indication `01`
-but no accepted ForceBoot. A temporary 100kHz trial detected an invalid header
-when RESET overlapped reception and stopped before any image transfer. Entry
-into update mode remains unresolved for this board through this no-CFG-write path.
-No image, CFG or erase operation was sent in these trials; 400kHz was restored.
-The original-Sony-CFG reflash profile below is a separate, explicitly erasing path.
+entry strategies are mutually exclusive. Spresense v00.144 may reject
+ForceBoot with `ea` (-22); this code-only path cannot continue when entry is
+rejected. The original-Sony-CFG reflash profile below is a separate,
+explicitly erasing path.
 
 The wire log can establish that no CFG or erase command was sent. There is no
 full CFG readback, byte-for-byte preservation proof, or cross-version CFG
@@ -148,13 +143,12 @@ python3 examples/i2c_firmware_update.py --write \
 ```
 
 The default `--enter-mode force` requests update mode without an erase
-command. On the tested v00.103 board it was rejected. The tool stops and does
-not switch modes automatically. A separate invocation with
+command. Spresense v00.103 may reject this request. A rejection stops the
+tool; it does not switch modes automatically. A separate invocation with
 `--write --enter-mode erase` explicitly **erases eMRAM**, then transfers the
 RAM updater, SDK, application, library and **Spresense-specific configuration**.
-That is the mode recorded as successful on the tested Spresense board. It is
-not a generic recovery method for other modules, and there is no automatic
-backup or rollback.
+This mode is specific to the Spresense board. There is no automatic backup
+or rollback.
 
 Each transfer and image-write acknowledgement is checked. Completion requires
 a reset followed by a version query returning `v00.144`. Full eMRAM readback
@@ -235,10 +229,9 @@ erases, resets after an error or rolls back partially written images.
 Spresense-only profile. It combines audited v201 RAM updater/SDK/APP/LIB
 with `spresense_i2c.cfg` from the official Sony v144 package (3,008 bytes,
 SHA-256 `f903fe844e52d9d014eb86a4d72150d6b53ca9cae8857f6789562838b7eb7b0c`).
-This is the same CFG input used in the earlier Spresense v144 update; it does
-not use a different board's CFG. The file content is retained, but the procedure **erases
-eMRAM and rewrites code and the original Sony CFG**. Full installed-CFG
-readback is unavailable, and the v201 combination still requires hardware
+The CFG is specific to the Spresense board. The file content is retained,
+but the procedure **erases eMRAM and rewrites code and the original Sony CFG**.
+Full installed-CFG readback is unavailable, and the v201 combination requires hardware
 validation. This is separate from the tool that forbids all CFG writes.
 
 Create an offline plan first:
@@ -278,15 +271,5 @@ before sending the RAM updater. Normal firmware or any other error prevents
 transfer. Resume sends neither STOP nor another erase. It cannot resume or
 replay an image after transfer has begun.
 
-On 2026-10-19, one Spresense GNSS Add-on Board was updated from v00.144 to
-this v00.201 combination, followed by an independent version query and a
-normal-positioning 3D fix. The erase acknowledgement initially timed out;
-after identifying the pending response, the bootloader probe allowed resume
-without another erase. All 250 frames and the SDK/APP/LIB/original-Sony-CFG
-program operations were acknowledged. This hardware result does not imply
-official Sony distribution or support for the externally supplied firmware.
-Three minutes of RTCM capture produced 560 valid frames with no CRC errors.
-A 60-second normal session, 180-second RTCM session and 60-second normal
-reconnection completed successfully. Both normal sessions had 3D fixes,
-approximately one-second updates and no read/close errors. RTCM shutdown,
-normal-notification restoration and the final version query also succeeded.
+This experimental profile does not imply official Sony distribution or
+support for the externally supplied firmware.

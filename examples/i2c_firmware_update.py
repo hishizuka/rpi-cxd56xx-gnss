@@ -22,7 +22,7 @@ import time
 import zipfile
 
 from _firmware_common import (
-    CHUNK_SIZE, ReceiverCommandError, decode_header, image_summary, injection_frames,
+    ReceiverCommandError, decode_header, image_summary, injection_frames,
     is_injection_frame, load_image_files, packet_parts, verify_image,
     wire_command_event,
 )

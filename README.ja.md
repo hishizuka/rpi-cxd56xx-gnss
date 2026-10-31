@@ -10,12 +10,13 @@ pip install rpi-cxd56xx-gnss
 
 Raspberry Pi で Sony CXD56xx GNSS を利用するための Linux I2C ドライバー、Python バインディング、コマンドラインツールです。
 `CXD56xx` クラスまたは `cxd56xx-gnss` コマンドで、位置・高度・速度・方位・衛星情報・UTC 時刻を取得できます。
-インストールされる Python API と CLI は **I2C のみ対応**です。
-Python APIでは[QZSS災危通報の生データ](docs/ja/api.md#qzss-災危通報i2c)も取得でき、
+Python APIにはPOSIX UART用の[`CXD56xxUART`](docs/ja/uart-api.md)も追加しています。
+位置と生RTCMを取得できます。CLIは引き続きI2C用です。
+I2C用Python APIでは[QZSS災危通報の生データ](docs/ja/api.md#qzss-災危通報i2c)も取得でき、
 別途インストールしたazarashiへ直接渡せます。L1Sと災危通報は起動時・稼働中にON/OFFできます。
 `wait_ready()` で設定適用を確認でき、再生成が必要な受信停止は `CXD56xxSessionError` で判別できます。
 
-**Linux、Python 3.13 以上、libgpiod 2.0 以上**が必要です。
+I2Cドライバーには**Linux、Python 3.13 以上、libgpiod 2.0 以上**が必要です。
 パッケージは利用環境でソースからビルドされます。Raspberry Pi OS Trixie 以降を推奨します。
 
 ## クイックスタート
@@ -43,7 +44,13 @@ cxd56xx-gnss
 
 CXD5605 の I2C 接続での互換性は未確認です。
 
-## 独立した UART サンプル
+## UART Python APIと独立サンプル
+
+チェックアウトから`CXD56XX_BUILD_I2C=0 python -m pip install '.[uart]'`
+でUART専用APIを導入できます。
+[UART APIガイド](docs/ja/uart-api.md)に起動・値の定義・RTCMを記載しています。
+I2Cと同じDCR設定・受信APIを提供します。UARTのDCR出力設定はv00.201のASCII出力向けです。
+対応はFWに依存し、有効化には診断電文も含む出力マスクを使用します。
 
 リポジトリには、起動コマンド送信・バンド選択・生の NMEA 出力を行う、独立した pySerial の
 [UART サンプル](https://github.com/hishizuka/rpi-cxd56xx-gnss/blob/main/examples/uart_read.py)を含みます。

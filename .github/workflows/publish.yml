@@ -17,6 +17,31 @@ permissions:
   contents: read
 
 jobs:
+  uart:
+    runs-on: ubuntu-24.04
+    container: debian:trixie
+    steps:
+      - name: Install Python without native build dependencies
+        run: |
+          apt-get update
+          apt-get install -y ca-certificates git python3-venv
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Build and install UART-only wheel
+        env:
+          CXD56XX_BUILD_I2C: "0"
+        run: |
+          python3 -m venv /tmp/uart-venv
+          /tmp/uart-venv/bin/python -m pip install --upgrade pip
+          /tmp/uart-venv/bin/python -m pip wheel --no-deps --wheel-dir /tmp/uart-wheel .
+          /tmp/uart-venv/bin/python -m pip install /tmp/uart-wheel/*.whl 'pynmeagps>=1.1.4'
+          cd /tmp
+          /tmp/uart-venv/bin/python -c "from cxd56xx_gnss import CXD56xxUART; print(CXD56xxUART.__name__)"
+      - name: Test UART transport
+        run: |
+          /tmp/uart-venv/bin/python -m unittest discover -s tests -p 'test_uart.py'
+
   build:
     runs-on: ubuntu-24.04
     container: debian:trixie
@@ -46,7 +71,7 @@ jobs:
               raise SystemExit(f"Run this workflow from tag v{version}, not a branch.")
           PY
       - name: Install build tools
-        run: python -m pip install --upgrade build twine 'Cython>=3.0' 'setuptools>=77'
+        run: python -m pip install --upgrade build twine 'Cython>=3.0' 'setuptools>=77' 'pynmeagps>=1.1.4'
       - name: Run hardware-free tests
         run: |
           python -m unittest discover -s tests -p 'test_*.py'
@@ -71,7 +96,7 @@ jobs:
 
   publish:
     if: github.event_name == 'workflow_dispatch'
-    needs: build
+    needs: [build, uart]
     runs-on: ubuntu-24.04
     environment:
       name: ${{ inputs.repository }}

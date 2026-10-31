@@ -12,7 +12,8 @@
 pySerial を直接使用するため、I2C 用のネイティブ拡張や libgpiod は不要です。
 
 この独立したサンプルは pip ではインストールされず、`CXD56xx` API も提供しません。
-パッケージの API と CLI は **I2C のみ対応**です。
+別のインストール可能な`CXD56xxUART`については[UART Python API](uart-api.md)を参照してください。
+CLIは引き続きI2C用です。
 
 ## 接続と実行
 

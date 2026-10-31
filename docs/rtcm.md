@@ -5,10 +5,10 @@ English | [日本語](ja/rtcm.md)
 [README](../README.md) · [Setup](setup.md) · [Firmware update](firmware-update.md)
 
 The standalone tools capture RTCM observations over I2C. They do not add an RTCM
-API to `CXD56xx` or the installed CLI. Spresense GNSS Add-on Board v00.144 has
-recorded successful captures; v00.103 rejected the RTCM notification command in
-the [hardware tests](ja/rtcm.md). Other board/firmware combinations need separate
-validation. Receiving RTCM does not by itself establish RTK/PPK accuracy.
+API to `CXD56xx` or the installed CLI. Spresense GNSS Add-on Board v00.144
+supports RTCM collection; v00.103 rejects the RTCM notification command.
+Other board/firmware combinations need separate validation. Receiving RTCM
+does not by itself establish RTK/PPK accuracy.
 
 ## Prepare
 

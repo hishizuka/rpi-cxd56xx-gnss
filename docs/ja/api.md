@@ -160,8 +160,8 @@ await asyncio.to_thread(gps.set_qzss_dcr_enabled, False)
 受信処理はパディングを含む32バイトを変更せず、文字列化や通報内容の解析を行いません。
 I2Cパケットのチェックサムは確認しますが、L1SのCRCと内容の検証はデコーダーの責務です。
 受信機が出力したMT43・MT44はどちらも渡します。
-試験した `v00.201` では両方の実受信を確認しましたが、採取した本文は
-azarashi 0.17.1がL1S CRC不一致で拒否しました。正常な通報として受理できたことは意味しません。
+CXD5610の出力はL1S CRC不一致でazarashiに拒否される場合があります。
+後述のアダプターは受信CRCを検証せずに解析用のデータへ変換します。
 
 ### `DCReport.to_azarashi_packet(*, reconstruct_crc=False) -> bytes`
 

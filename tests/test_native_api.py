@@ -71,11 +71,12 @@ class NativeAPITests(unittest.TestCase):
         workspace = Path(cls.directory.name)
         package = workspace / "src" / "cxd56xx_gnss"
         package.mkdir(parents=True)
-        for name in ("_cxd5610.pyx", "_types.py", "_exceptions.py", "__init__.py"):
+        python_files = ("_checksum.py", "_types.py", "_exceptions.py", "__init__.py")
+        for name in ("_cxd5610.pyx", *python_files):
             shutil.copyfile(ROOT / "src" / "cxd56xx_gnss" / name, package / name)
         cls.library = workspace / "lib"
         (cls.library / "cxd56xx_gnss").mkdir(parents=True)
-        for name in ("_types.py", "_exceptions.py", "__init__.py"):
+        for name in python_files:
             shutil.copyfile(package / name, cls.library / "cxd56xx_gnss" / name)
         includes = [str(ROOT / "src" / "cxd56xx_gnss")]
         if include:

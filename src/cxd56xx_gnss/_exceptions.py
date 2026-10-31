@@ -1,5 +1,16 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Errors that require closing and recreating a receiver session."""
+"""Receiver session failures and command rejections."""
+
+import errno
+
+
+class UARTCommandError(OSError):
+    """A definite receiver rejection; response retains the original reply."""
+
+    def __init__(self, command, response):
+        super().__init__(errno.EPROTO, response)
+        self.command = command
+        self.response = response
 
 
 class CXD56xxSessionError(OSError):

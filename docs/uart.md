@@ -12,7 +12,8 @@ REYAX RYS8833_Lite / RYS8839_Lite modules and prints their NMEA output.
 It uses pySerial directly and does not require the I2C native extension or libgpiod.
 
 This standalone example is not installed by pip and does not provide the
-`CXD56xx` API. The package API and CLI support **I2C only**.
+`CXD56xx` API. For the separate installed `CXD56xxUART` API, see the
+[UART Python API guide](uart-api.md). The CLI remains I2C-only.
 
 ## Connect and run
 

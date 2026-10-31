@@ -11,14 +11,15 @@ English | [日本語](https://github.com/hishizuka/rpi-cxd56xx-gnss/blob/main/RE
 Sony CXD56xx GNSS receivers on Raspberry Pi: a Linux I2C driver, Python bindings
 and a command-line reader. Read position, altitude, speed, heading, satellite
 data and UTC time with the `CXD56xx` class or `cxd56xx-gnss` command.
-The installed Python API and CLI support **I2C only**.
-The Python API also exposes raw [QZSS DC reports](docs/api.md#qzss-disaster-and-crisis-reports-i2c)
+The Python API also provides a separate [`CXD56xxUART`](docs/uart-api.md) class
+for POSIX UART position and raw RTCM. The CLI remains I2C-only.
+The I2C Python API also exposes raw [QZSS DC reports](docs/api.md#qzss-disaster-and-crisis-reports-i2c)
 for direct decoding with optional azarashi. Enable or disable L1S/DC reports at
 startup or at runtime using the Python API.
 `wait_ready()` confirms receiver configuration; `CXD56xxSessionError` identifies
 a failed session that needs closing and recreating.
 
-Requires **Linux, Python 3.13+ and libgpiod 2.0+**. Packages are built from source
+The I2C driver requires **Linux, Python 3.13+ and libgpiod 2.0+**. Packages are built from source
 on the target system; Raspberry Pi OS Trixie or later is recommended.
 
 ## Quick start
@@ -48,7 +49,13 @@ Press **Ctrl+C** to stop the reader.
 
 CXD5605 I2C compatibility is unverified.
 
-## Standalone UART example
+## UART Python API and standalone example
+
+For the installed UART API, use `CXD56XX_BUILD_I2C=0 python -m pip install '.[uart]'`
+from a checkout. See the [UART API guide](docs/uart-api.md)
+for lifecycle, field definitions, RTCM and the I2C-compatible DCR interface.
+The UART DCR output profile targets v00.201 ASCII UART and enables verbose
+NMEA traffic. Support depends on receiver firmware.
 
 The repository includes a separate pySerial [UART example](https://github.com/hishizuka/rpi-cxd56xx-gnss/blob/main/examples/uart_read.py)
 for startup commands, band selection and raw NMEA output. It is **not installed
